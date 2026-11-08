@@ -1,6 +1,6 @@
 // Service worker : l'application s'ouvre même sans réseau. Changer VERSION à chaque mise en ligne.
-const VERSION = 'pilotage-v3.2.1';
-const SHELL = ['./', 'index.html', 'css/style.css', 'js/config.js', 'js/sync.js', 'js/engine.js', 'js/prompts.js', 'js/importers.js', 'js/app.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png'];
+const VERSION = 'pilotage-v3.3.0';
+const SHELL = ['./', 'index.html', 'css/style.css', 'js/config.js', 'js/sync.js', 'js/engine.js', 'js/prompts.js', 'js/importers.js', 'donnees/correctifs.js', 'js/app.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

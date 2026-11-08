@@ -124,6 +124,40 @@ Mêmes notions, même niveau, difficulté comparable.
 Des exercices vraiment nouveaux : autres énoncés, autres contextes, autres valeurs, autres situations professionnelles.
 Ne reprends aucun exercice déjà fait dans cette conversation (fiches, évaluations, séries précédentes).`,
     },
+    exercicesExpert: {
+      label: 'Exercices en plus — niveau expert',
+      vars: { entete: 'classe et matière', sequence_num: 'numéro', sequence: 'titre', seances_concernees: 'séances visées', serie_num: 'numéro de la série' },
+      text: `{entete}
+Séquence {sequence_num} : {sequence}
+
+Exercices en plus — NIVEAU EXPERT — série {serie_num}
+Séances concernées :
+{seances_concernees}
+
+Mêmes notions, mais des exercices nettement plus difficiles, pour les élèves les plus à l'aise :
+- problèmes en plusieurs étapes, peu guidés, où l'élève choisit lui-même la méthode ;
+- situations professionnelles réalistes avec des données à trier (certaines inutiles) ;
+- au moins un exercice qui mélange ces notions avec celles des séquences précédentes ;
+- une question ouverte ou de justification par exercice.
+Rester dans le programme de la classe (rien hors programme).
+Des exercices vraiment nouveaux : ne reprends aucun exercice déjà fait dans cette conversation.`,
+    },
+    quiz: {
+      label: 'Quiz',
+      vars: { entete: 'classe et matière', sequence_num: 'numéro', sequence: 'titre', seances_concernees: 'séances visées', duree: 'durée', quiz_num: 'numéro du quiz' },
+      text: `{entete}
+Séquence {sequence_num} : {sequence}
+
+Quiz n° {quiz_num} — durée pour les élèves : {duree}
+Séances concernées :
+{seances_concernees}
+
+Produis un quiz que les élèves font en autonomie en {duree} environ :
+- des questions variées : QCM, vrai / faux à justifier, calculs courts, lecture de graphique ou de tableau, un ou deux petits problèmes en situation professionnelle ;
+- une progression du plus facile au plus difficile, avec le nombre de points de chaque question ;
+- en fin de document, le corrigé et des exemples de réponses attendues.
+Format et mise en page selon les consignes du Projet. Ne reprends pas des questions déjà posées dans cette conversation.`,
+    },
     notions: {
       label: 'Notions de la séquence',
       vars: { entete: 'classe et matière', sequence_num: 'numéro', sequence: 'titre', seances: 'liste des séances' },

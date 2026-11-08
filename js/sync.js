@@ -27,15 +27,17 @@
         const remoteNewer = data.updated_at !== meta.syncedAt;
         if (!remoteNewer) { busy = false; if (meta.dirty) return push(); set('ok'); return; }
         let take = true;
-        if (meta.dirty && !hooks.isEmpty()) {
+        // Changements locaux = seulement des correctifs automatiques : on prend la version en ligne sans demander
+        if (meta.dirty && !meta.patchOnly && !hooks.isEmpty()) {
           take = hooks.ask(meta.syncedAt
             ? 'Vos données ont changé sur cet appareil ET sur un autre appareil.\n\nOK : prendre la version en ligne (les changements de cet appareil sont perdus).\nAnnuler : garder la version de cet appareil et l\'envoyer en ligne.'
             : 'Des données existent déjà en ligne pour ce compte.\n\nOK : les récupérer sur cet appareil (les données actuelles de cet appareil sont remplacées).\nAnnuler : remplacer la version en ligne par celle de cet appareil.');
         }
         if (take) {
-          hooks.setData(data.data);
-          writeMeta({ ...meta, syncedAt: data.updated_at, dirty: false });
+          const patched = hooks.setData(data.data); // true si des correctifs viennent d'être appliqués
+          writeMeta({ ...meta, syncedAt: data.updated_at, dirty: !!patched, patchOnly: !!patched });
           busy = false; set('ok');
+          if (patched) return push(true);
         } else { busy = false; return push(true); }
       } catch (e) { busy = false; set('erreur', e.message || String(e)); }
     }
@@ -47,14 +49,15 @@
         const now = new Date().toISOString();
         const { error } = await client.from('pilotage').upsert({ user_id: user.id, data: hooks.getData(), updated_at: now });
         if (error) throw error;
-        writeMeta({ ...readMeta(), syncedAt: now, dirty: false });
+        writeMeta({ ...readMeta(), syncedAt: now, dirty: false, patchOnly: false });
         busy = false; set('ok');
       } catch (e) { busy = false; set('erreur', e.message || String(e)); }
     }
     function schedule() { clearTimeout(timer); timer = setTimeout(() => push(), 2500); }
     // À appeler après chaque enregistrement local
-    function changed() {
-      writeMeta({ ...readMeta(), dirty: true });
+    function changed(patchOnly) {
+      const m = readMeta();
+      writeMeta({ ...m, dirty: true, patchOnly: !!patchOnly && (m.dirty ? !!m.patchOnly : true) });
       if (user) { set('attente'); schedule(); }
     }
 

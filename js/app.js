@@ -37,7 +37,7 @@
       occ: {},          // par heure de cours : statut, annulé, compte comme séance, libre…
       notes: {},        // par créneau daté : contenu (AP, co-intervention, cours libre)
       initial: {},      // copie figée de la progression initiale, par classe
-      evaluations: [], exercises: [], prompts: {}, archives: [],
+      evaluations: [], exercises: [], quizzes: [], prompts: {}, archives: [],
     };
   }
   function fixSlot(s) {
@@ -57,7 +57,7 @@
     s.settings = { ...d.settings, ...(s.settings || {}) };
     if (!hadAnchors && s.settings.week1Ref) s.settings.weekAnchors = [{ monday: mondayOf(s.settings.week1Ref), type: 1 }];
     delete s.settings.week1Ref;
-    for (const k of ['classes', 'sequences', 'seances', 'slots', 'extras', 'events', 'holidays', 'evaluations', 'exercises', 'archives']) if (!Array.isArray(s[k])) s[k] = d[k];
+    for (const k of ['classes', 'sequences', 'seances', 'slots', 'extras', 'events', 'holidays', 'evaluations', 'exercises', 'quizzes', 'archives']) if (!Array.isArray(s[k])) s[k] = d[k];
     for (const k of ['occ', 'initial', 'notes', 'prompts']) if (!s[k] || typeof s[k] !== 'object') s[k] = {};
     s.slots.forEach(fixSlot); s.extras.forEach(fixSlot);
     for (const ini of Object.values(s.initial)) if (ini && !ini.text && Array.isArray(ini.sequences)) ini.text = iniText(ini);
@@ -95,13 +95,13 @@
   const patched = applyPatches();
   SY = PSync({
     getData: () => { const { _rev, ...rest } = S; return rest; },
-    setData: d => { S = migrate(d); applyPatches(); persist(true); render(); drawModal(); toast('Données récupérées en ligne.'); },
+    setData: d => { S = migrate(d); const p = applyPatches(); persist(true); render(); drawModal(); toast(p.length ? 'Données récupérées en ligne et mises à jour : ' + p.join(' ; ') : 'Données récupérées en ligne.'); return p.length > 0; },
     isEmpty: () => isEmpty(S),
     onStatus: () => renderSyncBtn(),
     ask: q => confirm(q),
   });
   if (seeded || patched.length) setTimeout(() => {
-    persist();
+    if (seeded) persist(); else { persist(true); SY.changed(true); }
     toast(seeded ? 'Emploi du temps et progressions 2026-2027 chargés.' : 'Données mises à jour : ' + patched.join(' ; '));
   }, 0);
 
@@ -649,6 +649,7 @@
       const ss = E.orderedSeancesOf(q.id);
       const evals = S.evaluations.filter(x => x.sequenceId === q.id).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
       const exos = S.exercises.filter(x => x.sequenceId === q.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      const quizzes = S.quizzes.filter(x => x.sequenceId === q.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
       h += `<section class="card seq" style="--cc:${classColor(c.id)}">
         <div class="seqh"><h2>Séquence ${i + 1} – ${esc(q.title)}</h2>
           <div class="tools"><button class="icon" data-a="renSeq" data-id="${q.id}" title="Renommer" aria-label="Renommer">✎</button>
@@ -668,7 +669,9 @@
           <div><h3>Évaluations <button class="icon plus" data-a="evalForm" data-seq="${q.id}" title="Ajouter une évaluation" aria-label="Ajouter une évaluation">＋</button></h3>
             ${evals.length ? `<ul class="plain">${evals.map(ev => `<li><a href="#" data-a="evalForm" data-id="${ev.id}">${ev.type === 'fin' ? 'Fin de séquence' : 'Partielle'} · ${esc(ev.duration)}${ev.date ? ' · ' + esc(fmt(ev.date)) : ''}</a> <span class="muted small">séances ${ev.seanceIds.map(id => seanceById(id)).filter(Boolean).map(seanceNum).join(', ') || '—'}</span></li>`).join('')}</ul>` : '<p class="muted small">Aucune.</p>'}</div>
           <div><h3>Exercices en plus <button class="icon plus" data-a="exoForm" data-seq="${q.id}" title="Nouvelle série" aria-label="Nouvelle série d'exercices">＋</button></h3>
-            ${exos.length ? `<ul class="plain">${exos.map((x, k) => `<li>Série ${k + 1} · ${esc(fmt(x.createdAt))} <span class="muted small">séances ${x.seanceIds.map(id => seanceById(id)).filter(Boolean).map(seanceNum).join(', ') || 'toutes'}</span> <button class="icon" data-a="delExo" data-id="${x.id}" aria-label="Supprimer">🗑</button></li>`).join('')}</ul>` : '<p class="muted small">Aucune série demandée.</p>'}</div>
+            ${exos.length ? `<ul class="plain">${exos.map((x, k) => `<li>Série ${k + 1}${x.level === 'expert' ? ' <b>expert</b>' : ''} · ${esc(fmt(x.createdAt))} <span class="muted small">séances ${x.seanceIds.map(id => seanceById(id)).filter(Boolean).map(seanceNum).join(', ') || 'toutes'}</span> <button class="icon" data-a="delExo" data-id="${x.id}" aria-label="Supprimer">🗑</button></li>`).join('')}</ul>` : '<p class="muted small">Aucune série demandée.</p>'}</div>
+          <div><h3>Quiz <button class="icon plus" data-a="quizForm" data-seq="${q.id}" title="Nouveau quiz" aria-label="Nouveau quiz">＋</button></h3>
+            ${quizzes.length ? `<ul class="plain">${quizzes.map((x, k) => `<li>Quiz ${k + 1} · ${esc(x.duration)} · ${esc(fmt(x.createdAt))} <span class="muted small">séances ${x.seanceIds.map(id => seanceById(id)).filter(Boolean).map(seanceNum).join(', ') || 'toutes'}</span> <button class="icon" data-a="delQuiz" data-id="${x.id}" aria-label="Supprimer">🗑</button></li>`).join('')}</ul>` : '<p class="muted small">Aucun quiz demandé.</p>'}</div>
         </div>
       </section>`;
     });
@@ -751,19 +754,22 @@
         </form>`;
     };
   }
-  function exoForm(seqId) {
+  // Exercices en plus (normal ou expert) et quiz : on choisit les séances concernées, puis on copie le prompt
+  function exoForm(seqId, quiz) {
     return () => {
       const q = seqById(seqId); if (!q) return null;
-      const ss = E.orderedSeancesOf(q.id).filter(s => s.kind !== 'evaluation' && !s.skipped);
-      const n = S.exercises.filter(x => x.sequenceId === q.id).length + 1;
+      const ss = E.orderedSeancesOf(q.id).filter(s => s.kind !== 'evaluation' && !isRevision(s) && !s.skipped);
+      const n = (quiz ? S.quizzes : S.exercises).filter(x => x.sequenceId === q.id).length + 1;
       return `<div class="muted small">${esc(classById(q.classId).short)} · Séquence ${seqNum(q)} – ${esc(q.title)}</div>
-        <h2>Exercices en plus — série ${n}</h2>
-        <form class="form" data-form="exo" data-seq="${q.id}">
+        <h2>${quiz ? `Quiz n° ${n}` : `Exercices en plus — série ${n}`}</h2>
+        <form class="form" data-form="${quiz ? 'quiz' : 'exo'}" data-seq="${q.id}">
           <fieldset><legend>Séances concernées (aucune cochée = toute la séquence)</legend>
-            ${ss.map((s, j) => `<label class="check"><input type="checkbox" name="sea" value="${s.id}" ${['realisee', 'non_terminee'].includes(E.seanceStatus(s)) ? 'checked' : ''}> ${seanceNum(s)}. ${esc(s.title)}</label>`).join('')}</fieldset>
-          <div class="row"><button type="submit">Copier le prompt (série ${n})</button></div>
+            ${ss.map(s => `<label class="check"><input type="checkbox" name="sea" value="${s.id}" ${['realisee', 'non_terminee'].includes(E.seanceStatus(s)) ? 'checked' : ''}> ${esc(numTxt(s))}</label>`).join('')}</fieldset>
+          ${quiz ? `<label>Durée pour les élèves <input name="duration" value="1 h" list="durees2"></label><datalist id="durees2"><option>30 min</option><option>45 min</option><option>1 h</option></datalist>
+            <div class="row"><button type="submit" value="quiz">Copier le prompt du quiz</button></div>`
+          : `<div class="row"><button type="submit" value="normal">Copier le prompt (série ${n})</button><button type="submit" class="expert" value="expert">Copier le prompt niveau expert</button></div>`}
         </form>
-        <p class="small muted">Le prompt demande des exercices vraiment nouveaux et rappelle à Claude de ne pas reprendre ceux déjà faits dans la conversation.</p>`;
+        <p class="small muted">${quiz ? 'Questions variées, du plus facile au plus difficile, avec le barème et le corrigé en fin de document.' : 'Niveau expert : problèmes en plusieurs étapes, peu guidés, situations professionnelles, notions mélangées. Le prompt rappelle à Claude de ne pas reprendre les exercices déjà faits.'}</p>`;
     };
   }
 
@@ -1751,6 +1757,8 @@ Mardi | 8h00-9h50 | Co-intervention | CAP1 Mét + CAP1 Peint | - | Q1 | - | Zabe
     evalForm: t => openModal(evalForm(t.dataset.id, t.dataset.seq)),
     delEval: t => { if (!confirm('Supprimer cette évaluation ?')) return; S.evaluations = S.evaluations.filter(x => x.id !== t.dataset.id); closeModal(); save(); },
     exoForm: t => openModal(exoForm(t.dataset.seq)),
+    quizForm: t => openModal(exoForm(t.dataset.seq, true)),
+    delQuiz: t => { if (!confirm('Supprimer ce quiz de la liste ?')) return; S.quizzes = S.quizzes.filter(x => x.id !== t.dataset.id); save(); },
     delExo: t => { if (!confirm('Supprimer cette série de la liste ?')) return; S.exercises = S.exercises.filter(x => x.id !== t.dataset.id); save(); },
     bulk: () => openModal(bulkModal),
     bulkGo: () => {
@@ -1942,8 +1950,14 @@ Mardi | 8h00-9h50 | Co-intervention | CAP1 Mét + CAP1 Peint | - | Q1 | - | Zabe
     } else if (kind === 'exo') {
       const q = seqById(f.dataset.seq), ids = fd.getAll('sea');
       const n = S.exercises.filter(x => x.sequenceId === q.id).length + 1;
-      S.exercises.push({ id: uid(), sequenceId: q.id, createdAt: today(), seanceIds: ids });
-      copy(P('exercices', { ...seqVars(q), serie_num: n, seances_concernees: seanceListText(ids) || 'toute la séquence' }), "Prompt d'exercices");
+      const expert = e.submitter && e.submitter.value === 'expert';
+      S.exercises.push({ id: uid(), sequenceId: q.id, createdAt: today(), seanceIds: ids, level: expert ? 'expert' : 'normal' });
+      copy(P(expert ? 'exercicesExpert' : 'exercices', { ...seqVars(q), serie_num: n, seances_concernees: seanceListText(ids) || 'toute la séquence' }), expert ? "Prompt d'exercices niveau expert" : "Prompt d'exercices");
+    } else if (kind === 'quiz') {
+      const q = seqById(f.dataset.seq), ids = fd.getAll('sea'), duree = (fd.get('duration') || '').trim() || '1 h';
+      const n = S.quizzes.filter(x => x.sequenceId === q.id).length + 1;
+      S.quizzes.push({ id: uid(), sequenceId: q.id, createdAt: today(), seanceIds: ids, duration: duree });
+      copy(P('quiz', { ...seqVars(q), quiz_num: n, duree, seances_concernees: seanceListText(ids) || 'toute la séquence' }), 'Prompt du quiz');
     }
     closeModal(); save();
   });
