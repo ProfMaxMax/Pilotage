@@ -84,7 +84,9 @@
   /* Le moteur travaille sur l'état S (voir app.js). Les résultats sont mis en cache
      tant que S._rev ne change pas. */
   function Engine(getState) {
-    let cacheRev = -1, cache = null;
+    // Cache valable pour un état donné ET une révision donnée (l'état peut être remplacé entièrement :
+    // données récupérées en ligne, sauvegarde restaurée…)
+    let cacheRev = -1, cache = null, cacheSt = null;
     const S = () => getState();
 
     function holidayLabel(date) {
@@ -128,7 +130,7 @@
        puis on alterne. Les semaines de vacances comptent ou non selon le réglage.
        « Forcer cette semaine » ajoute un repère. */
     const weekCache = new Map();
-    let wcRev = -1;
+    let wcRev = -1, wcSt = null;
     function isSchoolWeek(monday) {
       for (let i = 0; i < 5; i++) if (!holidayLabel(addDays(monday, i))) return true;
       return false;
@@ -141,7 +143,7 @@
     }
     function weekType(date) {
       const st = S();
-      if (wcRev !== st._rev) { weekCache.clear(); wcRev = st._rev; }
+      if (wcRev !== st._rev || wcSt !== st) { weekCache.clear(); wcRev = st._rev; wcSt = st; }
       const m = mondayOf(date);
       if (weekCache.has(m)) return weekCache.get(m);
       const list = anchors();
@@ -262,7 +264,7 @@
 
     function plan() {
       const st = S();
-      if (cache && cacheRev === st._rev) return cache;
+      if (cache && cacheRev === st._rev && cacheSt === st) return cache;
       const hoursByClass = {};
       for (let d = st.settings.rentree; d <= st.settings.finAnnee; d = addDays(d, 1)) {
         for (const b of blocksOn(d)) {
@@ -317,7 +319,7 @@
         classHours[c.id] = worst.hours;
       }
       cache = { occ, seance, perClass, classHours };
-      cacheRev = st._rev;
+      cacheRev = st._rev; cacheSt = st;
       return cache;
     }
 
