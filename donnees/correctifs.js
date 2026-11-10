@@ -329,4 +329,54 @@ window.PATCHES = [{
     }
     return true;
   },
+}, {
+  id: '2026-11-10-i',
+  label: '2MV : lecture graphique en co-intervention, Pythagore et Thalès raccourci ; CAP1 Mét : formation civique le 13 nov.',
+  apply(S, h) {
+    const { E, uid, norm, bump } = h;
+    const byOrder = (a, b) => a.order - b.order;
+    const seqs = S.sequences.filter(q => q.classId === 'c2mv').sort(byOrder);
+    const pyth = seqs.find(q => norm(q.title) === norm('Pythagore et Thalès'));
+    if (!pyth || seqs.some(q => norm(q.title).startsWith('lecturegraphique'))) return false;
+
+    // Séquence « Lecture graphique » sur les co-interventions des 13, 20 et 27 nov.
+    seqs.forEach((q, i) => { q.order = i; });
+    const at = pyth.order;
+    seqs.filter(q => q.order >= at).forEach(q => { q.order++; });
+    const lg = { id: uid(), classId: 'c2mv', title: 'Lecture graphique (co-intervention)', convUrl: '', order: at };
+    S.sequences.push(lg);
+    const lgS = ['Lire une courbe d’atelier', 'Image et antécédent', 'Tracer une courbe']
+      .map((t, j) => ({ id: uid(), sequenceId: lg.id, title: t, kind: 'cours', prepared: false, order: j }));
+    S.seances.push(...lgS);
+    const ci = S.slots.find(s => s.type === 'coint' && s.day === 5 && s.classIds.includes('c2mv'));
+    if (ci) ['2026-11-13', '2026-11-20', '2026-11-27'].forEach((d, j) => {
+      const k = `${ci.id}@${d}#0`; S.occ[k] = { ...(S.occ[k] || {}), counts: true, pin: lgS[j].id };
+    });
+
+    // Pythagore et Thalès : sans la découverte (vu au collège) ni l'heure de révision, fini le mardi 24 nov.
+    S.seances = S.seances.filter(s => !(s.sequenceId === pyth.id && (/d[ée]couverte/i.test(s.title) || s.kind === 'revision' || /^r[ée]vision/i.test(s.title))));
+    S.seances.filter(s => s.sequenceId === pyth.id).sort(byOrder).forEach((s, j) => { s.order = j; });
+    // AP du lundi utilisées pour les maths : 2MV1 le 16 nov., 2MV2 le 23 nov.
+    for (const [g, d] of [['2MV1', '2026-11-16'], ['2MV2', '2026-11-23']]) {
+      const sl = S.slots.find(s => s.type === 'ap' && s.day === 1 && s.group === g && s.classIds.includes('c2mv'));
+      if (sl) { const k = `${sl.id}@${d}#0`; S.occ[k] = { ...(S.occ[k] || {}), counts: true }; }
+    }
+
+    // CAP1 Mét : pas de cours le vendredi 13 nov. (formation civique, accompagnement des élèves)
+    S.events.push({ id: uid(), type: 'autre', label: 'Formation civique (accompagnement)', start: '2026-11-13', end: '2026-11-13', classIds: ['ccap1m'], noClass: true });
+
+    // Progression initiale 2MV : nouvelle organisation de novembre
+    bump();
+    const p = E.plan(), ini = S.initial.c2mv;
+    const iniSeq = q => {
+      const se = S.seances.filter(s => s.sequenceId === q.id).sort(byOrder).map(s => ({ title: s.title, date: (p.seance[s.id] || {}).firstDate || null }));
+      return { title: q.title, hours: se.length, start: se[0] && se[0].date, end: se.length ? se[se.length - 1].date : null, seances: se };
+    };
+    if (ini) {
+      const i = ini.sequences.findIndex(x => norm(x.title) === norm(pyth.title));
+      if (i >= 0) ini.sequences.splice(i, 1, iniSeq(lg), iniSeq(pyth));
+      ini.text = h.iniText(ini);
+    }
+    return true;
+  },
 }];

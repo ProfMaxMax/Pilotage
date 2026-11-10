@@ -532,7 +532,13 @@
     if (!x.defaultCounts) h += `<button class="ghost small" data-a="toggleCounts" data-h="${x.id}">${x.counts ? 'Ne plus en faire une séance' : 'Faire une séance de progression ici'}</button>`;
     else if (S.occ[x.id] && S.occ[x.id].counts === false) h += `<button class="ghost small" data-a="toggleCounts" data-h="${x.id}">Remettre une séance</button>`;
     if (x.counts && !rec.cancelled && rec.reserved) h += `<button class="ghost small" data-a="toggleReserved" data-h="${x.id}">Remettre une séance</button>`;
-    return h ? `<div class="row">${h}</div>` : '';
+    // Fixer une séance précise sur cette heure (sinon : la suivante dans l'ordre de la progression)
+    let pin = '';
+    if (x.counts && !rec.cancelled && b.classIds.length === 1) {
+      const opts = E.orderedSequences(b.classIds[0]).map(q => `<optgroup label="Séq. ${seqNum(q)} – ${esc(q.title)}">${E.orderedSeancesOf(q.id).filter(s => !s.skipped).map(s => `<option value="${s.id}" ${rec.pin === s.id ? 'selected' : ''}>${esc(numTxt(s))}</option>`).join('')}</optgroup>`).join('');
+      pin = `<label class="field small">Séance de cette heure <select data-c="pin" data-h="${x.id}"><option value="">Automatique (suite de la progression)</option>${opts}</select></label>`;
+    }
+    return (h ? `<div class="row">${h}</div>` : '') + pin;
   }
   function hourModal(hid) {
     return () => {
@@ -1873,6 +1879,7 @@ Mardi | 8h00-9h50 | Co-intervention | CAP1 Mét + CAP1 Peint | - | Q1 | - | Zabe
     prepared: t => { seanceById(t.dataset.id).prepared = t.checked; save(); },
     seanceTitle: t => { const v = t.value.trim(); if (v) { seanceById(t.dataset.id).title = v; commit(); render(); } },
     seanceKind: t => { seanceById(t.dataset.id).kind = t.value; save(); },
+    pin: t => { setOcc(t.dataset.h, r => { if (t.value) r.pin = t.value; else delete r.pin; }); save(); toast(t.value ? 'Séance fixée sur ce cours ; le reste de la progression suit son ordre.' : 'Retour à l\'ordre de la progression.'); },
     note: t => { const v = t.value.trim(); if (v) S.notes[t.dataset.id] = v; else delete S.notes[t.dataset.id]; save(); },
     pv: t => {
       const r = UI.edtPreview[Number(t.dataset.i)]; const f = t.dataset.f;

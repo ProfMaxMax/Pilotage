@@ -223,7 +223,8 @@
        - non réalisée : la séance est abandonnée, on passe à la suivante
        - annulé : le cours n'a pas lieu, aucune séance
        - libre : cours gardé en réserve (marge), aucune séance */
-    function runTrack(st, c, list, hours, t, nm) {
+    function runTrack(st, c, list, hours, t, nm, pinList) {
+      const pins = new Set(pinList.map(s => s.id));
       const occ = {}, seance = {};
       let p = 0;
       const stats = { total: hours.length, done: 0, future: 0, lost: 0, unvalidated: 0, free: 0, reserved: 0, reservedFuture: 0 };
@@ -234,6 +235,19 @@
         const past = h.date < t || (h.date === t && toMin(h.end) <= nm);
         if (rec.cancelled) { occ[h.id] = { cancelled: true, classId: c.id }; stats.lost++; continue; }
         if (rec.reserved) { occ[h.id] = { reserved: true, classId: c.id, past }; stats.reserved++; if (!past) stats.reservedFuture++; continue; }
+        // Séance fixée sur ce créneau (ex. séquence de co-intervention) : elle ne suit pas l'ordre de la bibliothèque
+        if (rec.pin && pins.has(rec.pin)) {
+          const info = (seance[rec.pin] ||= { occ: [], started: false, status: null, date: null, start: null });
+          occ[h.id] = { seanceId: rec.pin, classId: c.id, status: rec.status || null, cont: info.started, past, pinned: true };
+          info.occ.push(h.id);
+          if (!info.firstDate) info.firstDate = h.date;
+          info.date = h.date; info.start = h.start;
+          if (rec.status === 'realisee' || rec.status === 'non_realisee') { info.status = rec.status; if (rec.status === 'realisee') stats.done++; else stats.lost++; }
+          else if (rec.status === 'non_terminee') { info.status = 'non_terminee'; info.started = true; stats.done++; }
+          else if (rec.status === 'reportee') { if (!info.started) info.status = 'reportee'; stats.lost++; }
+          else if (past) stats.unvalidated++; else stats.future++;
+          continue;
+        }
         const s = list[p];
         if (!s) { occ[h.id] = { free: true, classId: c.id, past }; if (!past) stats.free++; continue; }
         const info = (seance[s.id] ||= { occ: [], started: false, status: null, date: null, start: null });
@@ -253,10 +267,12 @@
         }
       }
       for (let i = p; i < list.length; i++) if (!seance[list[i].id]) seance[list[i].id] = { occ: [], unplaced: true, status: null };
-      stats.seances = list.length;
-      stats.seancesDone = list.filter(s => seance[s.id] && seance[s.id].status === 'realisee').length;
-      stats.unplaced = list.length - p;
-      stats.remainingSeances = list.filter(s => { const i = seance[s.id]; return !i || !i.status || i.status === 'non_terminee' || i.status === 'reportee'; }).length;
+      const all = [...list, ...pinList];
+      for (const s of pinList) if (!seance[s.id]) seance[s.id] = { occ: [], unplaced: true, status: null };
+      stats.seances = all.length;
+      stats.seancesDone = all.filter(s => seance[s.id] && seance[s.id].status === 'realisee').length;
+      stats.unplaced = list.length - p + pinList.filter(s => seance[s.id].unplaced).length;
+      stats.remainingSeances = all.filter(s => { const i = seance[s.id]; return !i || !i.status || i.status === 'non_terminee' || i.status === 'reportee'; }).length;
       stats.availableHours = stats.future + stats.unvalidated + stats.free + stats.reservedFuture;
       stats.margin = stats.availableHours - stats.remainingSeances;
       return { occ, seance, stats, hours };
@@ -277,12 +293,15 @@
       }
       const occ = {}, seance = {}, perClass = {}, classHours = {};
       const t = today(), nm = nowMin();
+      // Séances fixées sur un créneau précis (occ[heure].pin)
+      const pinnedIds = new Set(Object.values(st.occ).filter(r => r && r.pin && !r.cancelled).map(r => r.pin));
       for (const c of st.classes) {
-        const list = orderedSeances(c.id).filter(s => !s.skipped);
+        const own = orderedSeances(c.id).filter(s => !s.skipped);
+        const list = own.filter(s => !pinnedIds.has(s.id)), pinList = own.filter(s => pinnedIds.has(s.id));
         const hours = (hoursByClass[c.id] || []).filter(h => h.date >= (c.startDate || st.settings.rentree));
         hours.sort((a, b) => a.date.localeCompare(b.date) || toMin(a.start) - toMin(b.start));
         const tracks = tracksOf(c.id);
-        const res = tracks.map(g => ({ group: g, ...runTrack(st, c, list, tracks.length > 1 ? hours.filter(h => !h.group || h.group === g) : hours, t, nm) }));
+        const res = tracks.map(g => ({ group: g, ...runTrack(st, c, list, tracks.length > 1 ? hours.filter(h => !h.group || h.group === g) : hours, t, nm, pinList) }));
         // Fusion des groupes
         for (const r of res) {
           for (const [hid, o] of Object.entries(r.occ)) {
@@ -300,7 +319,7 @@
             cur.split.push({ group: r.group, seanceId: o.seanceId, cont: o.cont, status: o.status });
           }
         }
-        for (const s of list) {
+        for (const s of own) {
           const infos = res.map(r => r.seance[s.id]).filter(Boolean);
           if (infos.length === 1) { seance[s.id] = infos[0]; continue; }
           const placed = infos.filter(i => !i.unplaced);
