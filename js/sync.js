@@ -68,6 +68,7 @@
       set(user ? 'ok' : 'deconnecte');
       if (user) pull();
       client.auth.onAuthStateChange((ev, session) => {
+        if (ev === 'PASSWORD_RECOVERY' && hooks.onRecovery) setTimeout(() => hooks.onRecovery(), 300); // lien « mot de passe oublié »
         const was = user && user.id;
         user = session ? session.user : null;
         if (!user) set('deconnecte');
@@ -85,10 +86,19 @@
       if (error) throw error;
       return !!(data && data.session); // false : il faut confirmer l'adresse e-mail
     }
+    // E-mail avec un lien qui ramène sur l'application pour choisir un nouveau mot de passe
+    async function resetPassword(email) {
+      const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+      if (error) throw error;
+    }
+    async function updatePassword(password) {
+      const { error } = await client.auth.updateUser({ password });
+      if (error) throw error;
+    }
     async function signOut() { await client.auth.signOut(); writeMeta({}); set('deconnecte'); }
 
     return {
-      enabled, start, changed, pull, push: () => push(true), signIn, signUp, signOut,
+      enabled, start, changed, pull, push: () => push(true), signIn, signUp, signOut, resetPassword, updatePassword,
       get status() { return status; }, get user() { return user; }, get error() { return lastError; },
     };
   }

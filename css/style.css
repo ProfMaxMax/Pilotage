@@ -275,6 +275,19 @@ label.field { display: flex; flex-direction: column; gap: .2rem; font-size: .85r
 .syncbtn { margin-left: auto; background: var(--soft); color: var(--ink); border-color: var(--line); font-size: .85rem; min-height: 32px; padding: .2rem .7rem; }
 .syncbtn.s-ok { color: var(--ok); } .syncbtn.s-erreur { color: var(--bad); border-color: var(--bad); }
 .syncbtn.s-deconnecte { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.doclink { text-decoration: none; flex-shrink: 0; }
+.search input { flex: 1; min-width: 180px; }
+.card ul.plain li .row { margin: .25rem 0 0; }
+/* Impression : l'agenda seul, sans menus ni boutons */
+@media print {
+  .top, .tabs, .toast, .modal, .dash, .banner, .seg, .navbtns, .warnbtn, .noprint, .pill, .val, .apsw, .more, .hint, .qdone { display: none !important; }
+  body { background: #fff; color: #000; font-size: 11px; }
+  main { padding: 0; max-width: none; }
+  .week, .month, .card { border-color: #999; break-inside: avoid; }
+  .blk { break-inside: avoid; border: 1px solid #999; }
+  .wday { break-inside: avoid; }
+  .toolbar { margin-bottom: .3rem; }
+}
 /* Cours sans la classe (stage, examen, formation) : hachuré en rouge */
 .blk.off { --cc: var(--bad); border-left-color: var(--bad); background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--bad) 14%, var(--card)) 0 6px, color-mix(in srgb, var(--bad) 30%, var(--card)) 6px 12px); }
 .blk.off .bh b, .blk.off .bh { color: var(--ink); }

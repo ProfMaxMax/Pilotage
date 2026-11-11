@@ -58,7 +58,7 @@
     if (!hadAnchors && s.settings.week1Ref) s.settings.weekAnchors = [{ monday: mondayOf(s.settings.week1Ref), type: 1 }];
     delete s.settings.week1Ref;
     for (const k of ['classes', 'sequences', 'seances', 'slots', 'extras', 'events', 'holidays', 'evaluations', 'exercises', 'quizzes', 'archives']) if (!Array.isArray(s[k])) s[k] = d[k];
-    for (const k of ['occ', 'initial', 'notes', 'prompts']) if (!s[k] || typeof s[k] !== 'object') s[k] = {};
+    for (const k of ['occ', 'initial', 'notes', 'prompts', 'homework']) if (!s[k] || typeof s[k] !== 'object') s[k] = {};
     s.slots.forEach(fixSlot); s.extras.forEach(fixSlot);
     for (const ini of Object.values(s.initial)) if (ini && !ini.text && Array.isArray(ini.sequences)) ini.text = iniText(ini);
     s.version = 3;
@@ -80,6 +80,21 @@
   let S = load();
   const seeded = !!S._seeded; delete S._seeded;
   const E = PE.Engine(() => S);
+  /* Sauvegardes automatiques sur l'appareil : une par jour, et avant chaque remplacement des données
+     (récupération en ligne, restauration, effacement). On garde les 8 dernières. */
+  const BK = 'pedago.backups';
+  function snapshots() { try { return JSON.parse(localStorage.getItem(BK)) || []; } catch (e) { return []; } }
+  function snapshot(reason, force) {
+    if (isEmpty(S)) return;
+    const list = snapshots(), day = today();
+    if (!force && list.some(b => b.day === day && b.reason === 'début de journée')) return;
+    const { _rev, archives, ...rest } = S;
+    list.unshift({ id: uid(), at: new Date().toISOString(), day, reason, data: rest });
+    while (list.length > 8) list.pop();
+    for (let i = 0; i < 4; i++) { try { localStorage.setItem(BK, JSON.stringify(list)); return; } catch (e) { list.pop(); } }
+  }
+  snapshot('début de journée');
+
   // Correctifs de données (donnees/correctifs.js), une seule fois par navigateur
   function applyPatches() {
     const done = S.settings.patches || (S.settings.patches = []);
@@ -95,7 +110,8 @@
   const patched = applyPatches();
   SY = PSync({
     getData: () => { const { _rev, ...rest } = S; return rest; },
-    setData: d => { S = migrate(d); const p = applyPatches(); persist(true); render(); drawModal(); toast(p.length ? 'Données récupérées en ligne et mises à jour : ' + p.join(' ; ') : 'Données récupérées en ligne.'); return p.length > 0; },
+    onRecovery: () => openModal(newPwdModal),
+    setData: d => { snapshot('avant récupération en ligne', true); S = migrate(d); const p = applyPatches(); persist(true); render(); drawModal(); toast(p.length ? 'Données récupérées en ligne et mises à jour : ' + p.join(' ; ') : 'Données récupérées en ligne.'); return p.length > 0; },
     isEmpty: () => isEmpty(S),
     onStatus: () => renderSyncBtn(),
     ask: q => confirm(q),
@@ -147,7 +163,7 @@
     return b ? { block: b, hour: b.hours[Number(idx)], date } : null;
   }
 
-  async function copy(text, what) {
+  async function copy(text, what, where) {
     try { await navigator.clipboard.writeText(text); }
     catch (e) {
       const ta = document.createElement('textarea'); ta.value = text; ta.setAttribute('readonly', '');
@@ -155,7 +171,7 @@
       try { document.execCommand('copy'); } catch (_) { /* ignore */ }
       ta.remove();
     }
-    toast((what || 'Prompt') + ' copié — collez-le dans Claude.');
+    toast((what || 'Prompt') + ' copié — collez-le dans ' + (where || 'Claude') + '.');
   }
 
   let toastTimer = null, undoFn = null;
@@ -198,6 +214,7 @@
         <label>Adresse e-mail <input type="email" name="email" autocomplete="username" required></label>
         <label>Mot de passe <input type="password" name="password" autocomplete="current-password" minlength="6" required></label>
         <div class="row"><button type="submit" value="in">Se connecter</button><button type="submit" class="ghost" value="up">Créer mon compte</button></div>
+        <p class="small"><a href="#" data-a="forgotPwd">Mot de passe oublié ?</a></p>
       </form>${SY.error ? `<p class="bad small">${esc(SY.error)}</p>` : ''}`;
     return `<h2>Données en ligne</h2>
       <p>Connecté : <b>${esc(SY.user.email)}</b></p>
@@ -206,10 +223,52 @@
       <div class="row"><button data-a="syncNow">Synchroniser maintenant</button><button class="ghost" data-a="signOut">Se déconnecter</button></div>`;
   }
 
+  /* ---------- À faire : prochaines séances à préparer, toutes classes ---------- */
+  function renderTodo() {
+    const p = E.plan(), t = today(), rows = [];
+    for (const c of S.classes) for (const s of E.orderedSeances(c.id)) {
+      const i = p.seance[s.id];
+      if (s.skipped || s.prepared || !i || !i.firstDate || i.firstDate < t || i.status) continue;
+      rows.push({ c, s, date: i.firstDate });
+    }
+    rows.sort((a, b) => a.date.localeCompare(b.date));
+    const list = rows.slice(0, 25);
+    return `<section class="card"><h2>À préparer</h2>
+      <p class="small muted">Les prochaines séances pas encore préparées, toutes classes confondues.</p>
+      ${list.length ? `<ul class="plain">${list.map(r => `<li style="--cc:${classColor(r.c.id)}"><b>${esc(fmt(r.date))}</b> · <b>${esc(r.c.short)}</b> · <a href="#" data-a="openSeance" data-id="${r.s.id}">${seanceLabel(r.s, false)}</a>
+        <span class="row"><button class="ghost small" data-a="copySeance" data-id="${r.s.id}">Copier le prompt</button><button class="ghost small" data-a="markPrepared" data-id="${r.s.id}">☐ Préparée</button></span></li>`).join('')}</ul>` : '<p class="muted">Tout est préparé.</p>'}
+      ${rows.length > list.length ? `<p class="small muted">… et ${rows.length - list.length} autres plus tard.</p>` : ''}</section>` + evalBoard();
+  }
+  // Suivi des évaluations : celles passées pas encore bouclées, puis les prochaines
+  function evalBoard() {
+    const p = E.plan(), t = today(), rows = [];
+    for (const c of S.classes) for (const s of E.orderedSeances(c.id)) {
+      const i = p.seance[s.id];
+      if (s.kind !== 'evaluation' || s.skipped || !i || !i.date) continue;
+      rows.push({ c, s, date: i.date, past: i.date < t });
+    }
+    rows.sort((a, b) => a.date.localeCompare(b.date));
+    const pending = rows.filter(r => r.past && !(r.s.corrected && r.s.graded));
+    const next = rows.filter(r => !r.past).slice(0, 10);
+    const box = (s, f, label) => `<label class="check small"><input type="checkbox" data-c="evalFlag" data-id="${s.id}" data-f="${f}" ${s[f] ? 'checked' : ''}> ${label}</label>`;
+    const line = r => `<li style="--cc:${classColor(r.c.id)}"><b>${esc(fmt(r.date))}</b> · <b>${esc(r.c.short)}</b> · <a href="#" data-a="openSeance" data-id="${r.s.id}">${seanceTitle(r.s)}</a>
+      <span class="row">${box(r.s, 'prepared', 'Sujet prêt')}${r.past ? box(r.s, 'corrected', 'Copies corrigées') + box(r.s, 'graded', 'Notes saisies') : ''}</span></li>`;
+    return `<section class="card"><h2>Évaluations</h2>
+      ${pending.length ? `<h3>À boucler (${pending.length})</h3><ul class="plain">${pending.map(line).join('')}</ul>` : ''}
+      <h3>À venir</h3>${next.length ? `<ul class="plain">${next.map(line).join('')}</ul>` : '<p class="muted small">Aucune évaluation à venir.</p>'}</section>`;
+  }
+  function newPwdModal() {
+    return `<h2>Nouveau mot de passe</h2>
+      <form class="form" data-form="newpwd">
+        <label>Nouveau mot de passe <input type="password" name="password" autocomplete="new-password" minlength="6" required></label>
+        <div class="row"><button type="submit">Enregistrer</button></div>
+      </form>`;
+  }
+
   /* ---------- Rendu principal ---------- */
   function renderTabs() {
     const n = E.unvalidatedList().length;
-    const tabs = [['agenda', 'Agenda', '▦'], ['progression', 'Progression', '↗'], ['bibliotheque', 'Bibliothèque', '❐'], ['reglages', 'Réglages', '⚙']];
+    const tabs = [['agenda', 'Agenda', '▦'], ['afaire', 'À faire', '✔'], ['progression', 'Progression', '↗'], ['bibliotheque', 'Bibliothèque', '❐'], ['reglages', 'Réglages', '⚙']];
     document.getElementById('tabs').innerHTML = tabs.map(([k, l, i]) =>
       `<button data-a="tab" data-tab="${k}" class="${UI.tab === k ? 'on' : ''}" ${UI.tab === k ? 'aria-current="page"' : ''}><span class="ti" aria-hidden="true">${i}</span><span class="tl">${l}</span>${k === 'agenda' && n ? `<span class="badge">${n}</span>` : ''}</button>`).join('');
   }
@@ -217,7 +276,7 @@
   function render() {
     lastPhone = isPhone();
     renderTabs();
-    const fn = { agenda: renderAgenda, progression: renderProgression, bibliotheque: renderLibrary, reglages: renderSettings }[UI.tab];
+    const fn = { agenda: renderAgenda, afaire: renderTodo, progression: renderProgression, bibliotheque: renderLibrary, reglages: renderSettings }[UI.tab];
     document.getElementById('view').innerHTML = fn();
   }
 
@@ -261,6 +320,7 @@
         <button class="pill" data-a="switchWeek" title="Aller à la prochaine semaine ${E.weekLabel(other)}">→ ${E.weekLabel(other)}</button>
         <button class="pill" data-a="forceWeek" title="Dire si cette semaine est Q1 ou Q2">Corriger</button>` : ''}</div>
       ${unv.length ? `<button class="warnbtn" data-a="unvalidated">À valider (${unv.length})</button>` : ''}
+      ${v !== 'year' ? `<button class="pill noprint" data-a="print" title="Imprimer ou enregistrer en PDF">🖨 Imprimer</button>` : ''}
     </div>`;
     h += `<div id="swipe">${{ day: dayView, week: weekView, month: monthView, year: yearView }[v]()}</div>`;
     return h;
@@ -291,7 +351,8 @@
     let st = '';
     if (o.status) st = `<button class="st st-${o.status}" data-a="hourMenu" data-h="${h.id}" title="${STATUS[o.status].label} — modifier">${STATUS[o.status].icon}${compact ? '' : ' ' + STATUS[o.status].label}</button>`;
     else if (o.past) st = statusButtons(h.id, compact);
-    return `<div class="hr ${o.past && !o.status ? 'pending' : ''}"><a href="#" class="sl" data-a="openSeance" data-id="${s.id}">${label}</a>${st}</div>`;
+    const doc = s.docUrl && !o.multi && !o.split ? `<a class="doclink" href="${esc(s.docUrl)}" target="_blank" rel="noopener" title="Ouvrir la fiche">📎</a>` : '';
+    return `<div class="hr ${o.past && !o.status ? 'pending' : ''}"><a href="#" class="sl" data-a="openSeance" data-id="${s.id}">${label}</a>${doc}${st}</div>`;
   }
   function blockHtml(b, compact, style) {
     const css = ` style="--cc:${blockColor(b)};${style || ''}"`;
@@ -580,6 +641,8 @@
           </form><p class="small muted">Le cours d'origine est marqué « déplacé » et un cours ponctuel est créé à la nouvelle date ; les séances suivent l'ordre chronologique.</p></details>`;
       } else if (b.blocked) h += `<p>${esc(b.blocked)} : pas de cours.</p>`;
       h += `<label class="field">Contenu / note de ce cours <textarea rows="2" data-c="note" data-id="${b.id}" placeholder="Ex. : Produit en croix pas à pas">${esc(b.note)}</textarea></label>`;
+      if (b.classIds.length) h += `<label class="field">Travail donné aux élèves <textarea rows="2" data-c="homework" data-id="${b.id}" placeholder="Ex. : finir l'exercice 3">${esc(S.homework[b.id] || '')}</textarea></label>
+        <div class="row"><button class="ghost" data-a="copyCahier" data-id="${b.id}">Copier pour le cahier de textes (Pronote)</button></div>`;
       if (b.extra) h += `<p><button class="danger" data-a="delExtra" data-id="${b.srcId}">Supprimer ce cours ponctuel</button></p>`;
       else h += `<p class="small muted">Créneau récurrent de l'emploi du temps — modifiable dans Réglages.</p>`;
       return h;
@@ -588,9 +651,11 @@
   function unvalidatedModal() {
     const ids = E.unvalidatedList();
     if (!ids.length) return `<h2>Tout est validé</h2><p>Aucun cours passé en attente.</p>`;
+    const allBtn = `<div class="row"><button data-a="validateAll">✓ Tout marquer « réalisé » (${ids.length})</button></div>
+      <p class="small muted">Puis corrigez seulement les exceptions. Pour ne plus avoir à valider : Réglages → Démarrage → « Réalisé par défaut ».</p>`;
     const rows = ids.map(id => ({ id, info: hourInfo(id), o: E.plan().occ[id] })).filter(r => r.info)
       .sort((a, b) => a.info.date.localeCompare(b.info.date) || toMin(a.info.hour.start) - toMin(b.info.hour.start));
-    return `<h2>Cours à valider (${rows.length})</h2>` + rows.map(r => {
+    return `<h2>Cours à valider (${rows.length})</h2>` + allBtn + rows.map(r => {
       const s = seanceById(r.o.seanceId), b = r.info.block;
       return `<div class="urow" style="--cc:${blockColor(b)}"><div><b>${esc(blockNames(b))}</b>${b.group ? ' · ' + esc(b.group) : ''} · ${esc(fmt(r.info.date))} ${hm(r.info.hour.start)}<br>${seanceLabel(s, r.o.cont)}</div>${statusButtons(r.id, false)}</div>`;
     }).join('');
@@ -646,7 +711,16 @@
     const c = classById(UI.libClass);
     if (!c) return `<div class="card notice">Aucune classe. <button data-a="goto" data-tab="reglages" data-sec="sec-classes">Ajouter une classe</button></div>`;
     const seqs = E.orderedSequences(c.id);
-    let h = classChips(c.id, 'libClass');
+    let h = `<form class="row search" data-form="libSearch"><input type="search" id="libSearch" value="${esc(UI.libQuery || '')}" placeholder="Chercher une séance (Thalès, quartiles…)" aria-label="Chercher une séance">
+      <button type="submit" class="ghost">Chercher</button>${UI.libQuery ? '<button type="button" class="ghost" data-a="libSearchClear">Effacer</button>' : ''}</form>`;
+    if (UI.libQuery) {
+      const qn = norm(UI.libQuery), hits = [];
+      for (const cl of S.classes) for (const sq of E.orderedSequences(cl.id)) for (const s of E.orderedSeancesOf(sq.id))
+        if (norm(s.title).includes(qn) || norm(sq.title).includes(qn) || norm(s.remark || '').includes(qn)) hits.push({ cl, sq, s });
+      return h + `<section class="card"><h2>${hits.length} résultat${hits.length > 1 ? 's' : ''} pour « ${esc(UI.libQuery)} »</h2>
+        ${hits.length ? `<ul class="plain">${hits.slice(0, 80).map(x => `<li><b>${esc(x.cl.short)}</b> · <span class="muted">Séq. ${seqNum(x.sq)} – ${esc(x.sq.title)}</span><br><a href="#" data-a="openSeance" data-id="${x.s.id}">${seanceLabel(x.s, false)}</a> <span class="muted small">${esc(seanceDateText(x.s))}</span></li>`).join('')}</ul>` : '<p class="muted">Aucune séance trouvée.</p>'}</section>`;
+    }
+    h += classChips(c.id, 'libClass');
     h += `<div class="libhead"><div><h1>${esc(c.short)}</h1><div class="muted">${esc(c.classe)} · ${esc(c.matiere)}</div></div>
       <div class="row">${c.projectUrl ? `<a class="btn ghost" href="${esc(c.projectUrl)}" target="_blank" rel="noopener">Projet Claude ↗</a>` : ''}
       <button data-a="addSeq">＋ Séquence</button><button class="ghost" data-a="bulk">Coller une liste de séances</button></div></div>`;
@@ -706,7 +780,10 @@
           : `<div class="notice small">Pas encore de conversation pour cette séquence. <button class="ghost small" data-a="copyStart" data-id="${q.id}">Copier le prompt de démarrage</button> <button class="ghost small" data-a="editConv" data-id="${q.id}">Coller le lien</button></div>`}
         <button data-a="copySeance" data-id="${s.id}">Copier le prompt de la séance</button>
         <button class="ghost" data-a="copyCorrige" data-id="${s.id}">Copier le prompt du corrigé</button>
+        ${s.docUrl ? `<a class="btn ghost" href="${esc(s.docUrl)}" target="_blank" rel="noopener">📎 Ouvrir la fiche ↗</a>` : ''}
       </div>
+      <label class="field">Lien vers la fiche (Drive, ENT…) <input type="url" value="${esc(s.docUrl || '')}" data-c="seanceField" data-f="docUrl" data-id="${s.id}" placeholder="https://…"></label>
+      <label class="field">Remarques pour la prochaine fois <textarea rows="2" data-c="seanceField" data-f="remark" data-id="${s.id}" placeholder="Ex. : trop long, prévoir les calculatrices…">${esc(s.remark || '')}</textarea></label>
       <details class="edit"><summary>Modifier</summary>
         <label>Titre <input type="text" value="${esc(s.title)}" data-c="seanceTitle" data-id="${s.id}"></label>
         <label>Nature <select data-c="seanceKind" data-id="${s.id}">${Object.entries(KINDS).map(([k, l]) => `<option value="${k}" ${(s.kind || 'cours') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
@@ -1034,7 +1111,8 @@ Séquence 2 – Statistiques
         ${initialTable(ini.sequences, ini.capacity)}
         <details class="edit"><summary>Texte importé</summary><pre class="ex">${esc(ini.text)}</pre></details>
         ${promptRow}
-        <div class="row"><button class="ghost" data-a="iniReimport">Réimporter une nouvelle version</button></div></section>`;
+        <div class="row"><button class="ghost" data-a="iniReimport">Réimporter une nouvelle version</button>
+          <button class="ghost" data-a="refreeze">Figer la progression actuelle comme nouvelle référence</button></div></section>`;
     }
     const tp = pv && pv.kind === 'text' && pv.classId === c.id ? pv : null;
     return `<section class="card"><h2>${ini ? 'Nouvelle version de la progression' : 'Progression initiale'} — ${esc(c.short)}</h2>
@@ -1241,6 +1319,7 @@ Séquence 2 – Statistiques
     if (k.margin < 0 || k.unplaced) h += `<div class="banner bad">Risque de ne pas terminer : ${k.unplaced ? `${k.unplaced} séance(s) n'ont pas de créneau avant la fin de l'année` : `il manque ${-k.margin} h`}. <a href="#" class="threat" data-a="threat" data-id="${c.id}">Voir le détail</a></div>`;
     if (!ini) h += `<div class="banner">Pas encore de progression initiale figée pour ${esc(c.short)} : la comparaison avance / retard apparaîtra après l'import. <button class="ghost" data-a="progSub" data-v="initiale">Importer</button></div>`;
     h += reorgHtml(c, k);
+    h += pastJournal(c);
     const seqs = E.orderedSequences(c.id);
     if (!seqs.length) h += `<div class="empty">Aucune séance pour cette classe.</div>`;
     seqs.forEach((q, i) => {
@@ -1253,6 +1332,35 @@ Séquence 2 – Statistiques
         <div class="row"><button class="ghost small" data-a="addSeance" data-id="${q.id}">＋ Séance</button></div></section>`;
     });
     return h;
+  }
+
+  /* Journal des cours passés : dire, heure par heure, quelle séance a été faite et comment ça s'est passé.
+     La suite de la progression se recalcule toute seule. */
+  function pastJournal(c) {
+    const t = today(), nm = PE.nowMin(), p = E.plan(), rows = [];
+    for (let d = c.startDate || S.settings.rentree; d <= t; d = addDays(d, 1)) {
+      for (const b of E.blocksOn(d)) {
+        if (!b.classIds.includes(c.id) || b.blocked || E.classBlocked(d, c.id)) continue;
+        for (const x of b.hours) if (x.counts && (d < t || toMin(x.end) <= nm)) rows.push({ d, x, b });
+      }
+    }
+    if (!rows.length) return '';
+    rows.reverse();
+    const all = UI.pastAll === c.id, list = all ? rows : rows.slice(0, 12);
+    const opts = E.orderedSequences(c.id).map(q => `<optgroup label="Séq. ${seqNum(q)} – ${esc(q.title)}">${E.orderedSeancesOf(q.id).filter(s => !s.skipped).map(s => `<option value="${s.id}">${esc(numTxt(s))}</option>`).join('')}</optgroup>`).join('');
+    const STS = [['', '— à valider —'], ['realisee', 'Réalisée'], ['non_terminee', 'Non terminée'], ['reportee', 'Reportée'], ['non_realisee', 'Non réalisée'], ['annule', 'Cours annulé']];
+    return `<details class="edit card" ${UI.pastOpen === c.id ? 'open' : ''} data-past="${c.id}"><summary>Corriger ce qui s'est passé (${rows.length} cours passés)</summary>
+      <p class="small muted">Pour chaque heure : la séance réellement faite et son statut. Une séance qui a duré 2 h : choisissez-la sur les deux heures. Le reste de la progression se recalcule.</p>
+      <div class="tablewrap"><table class="tbl"><thead><tr><th>Cours</th><th>Séance faite</th><th>Statut</th></tr></thead><tbody>
+      ${list.map(({ d, x, b }) => {
+        const rec = S.occ[x.id] || {}, o = p.occ[x.id] || {};
+        const auto = o.seanceId && !rec.pin && seanceById(o.seanceId) ? ' : ' + esc(numTxt(seanceById(o.seanceId))) : '';
+        const cur = rec.cancelled ? 'annule' : (rec.status || '');
+        return `<tr><td class="nowrap">${esc(fmt(d))} ${hm(x.start)}${b.group ? `<div class="small muted">${esc(b.group)}</div>` : ''}${b.type !== 'cours' ? `<div class="small muted">${b.type === 'ap' ? 'AP' : 'co-int.'}</div>` : ''}</td>
+          <td><select data-c="pin" data-h="${x.id}"><option value="">Automatique${auto}</option>${rec.pin ? opts.replace(`value="${rec.pin}"`, `value="${rec.pin}" selected`) : opts}</select></td>
+          <td><select data-c="hstatus" data-h="${x.id}">${STS.map(([v, l]) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${l}</option>`).join('')}</select></td></tr>`;
+      }).join('')}</tbody></table></div>
+      ${!all && rows.length > list.length ? `<button class="ghost small" data-a="pastAll" data-id="${c.id}">Voir les ${rows.length - list.length} cours plus anciens</button>` : ''}</details>`;
   }
 
   /* Réorganisation en cas de retard : propositions, simulation, rien d'appliqué sans validation */
@@ -1376,7 +1484,10 @@ Mardi | 8h00-9h50 | Co-intervention | CAP1 Mét + CAP1 Peint | - | Q1 | - | Zabe
       <p class="small">Toutes les séances prévues jusqu'à cette date (incluse) et pas encore validées passent en « réalisée ». Ajustez ensuite à la main celles qui n'ont pas eu lieu.</p>
       <div class="form"><label>Jusqu'au <input type="date" id="doneUntil" value="${addDays(today(), -1)}"></label>
       <label>Classe <select id="doneClass"><option value="">Toutes</option>${S.classes.map(c => `<option value="${c.id}">${esc(c.short)}</option>`).join('')}</select></label></div>
-      <button data-a="markDone">Marquer comme réalisé jusqu'au…</button></section>`;
+      <button data-a="markDone">Marquer comme réalisé jusqu'au…</button>
+      <h3>Réalisé par défaut</h3>
+      <label class="check"><input type="checkbox" data-c="setBool" data-f="autoDone" ${st.autoDone ? 'checked' : ''}> Compter chaque cours passé comme « réalisé », sauf si j'indique autre chose</label>
+      <p class="small muted">Plus besoin de valider chaque heure : vous ne signalez que les exceptions (non terminée, reportée, non réalisée, annulé).</p></section>`;
 
     const T = PROMPTS.TEMPLATES, key = T[UI.tplKey] ? UI.tplKey : 'seance', custom = S.prompts[key] != null;
     h += `<section class="card" id="sec-prompts"><h2>Modèles de prompts</h2>
@@ -1390,11 +1501,19 @@ Mardi | 8h00-9h50 | Co-intervention | CAP1 Mét + CAP1 Peint | - | Q1 | - | Zabe
     h += `<section class="card" id="sec-year"><h2>Nouvelle année scolaire</h2>
       <p class="small">Archive l'année ${esc(yl)} (tout est conservé : séquences, séances, validations, progression figée), puis repart avec les mêmes classes et les mêmes modèles de prompts pour ${esc(ny)}.</p>
       <label class="check"><input type="checkbox" id="keepEdt"> Garder l'emploi du temps actuel</label>
+      <label class="check"><input type="checkbox" id="keepProg" checked> Reprendre les séquences et les séances de cette année (titres, liens vers les fiches, remarques), sans les validations</label>
       <button data-a="archiveYear">Archiver ${esc(yl)} et préparer ${esc(ny)}</button>
       <h3>Années archivées</h3>
       ${S.archives.length ? `<ul class="plain">${S.archives.map(a => `<li><b>${esc(a.label)}</b> · archivée le ${esc(fmt(a.archivedAt))}
         <button class="ghost small" data-a="viewArchive" data-id="${a.id}">Consulter</button><button class="ghost small" data-a="exportArchive" data-id="${a.id}">Exporter</button><button class="icon" data-a="delArchive" data-id="${a.id}" aria-label="Supprimer">🗑</button></li>`).join('')}</ul>` : '<p class="muted small">Aucune.</p>'}</section>`;
 
+    const snaps = snapshots();
+    h += `<section class="card" id="sec-versions"><h2>Versions précédentes</h2>
+      <p class="small">L'application garde automatiquement sur cet appareil une copie de vos données chaque jour, et avant chaque remplacement (récupération en ligne, restauration). Les 8 dernières sont conservées.</p>
+      ${snaps.length ? `<ul class="plain">${snaps.map(b => `<li>${esc(new Date(b.at).toLocaleString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))} · <span class="muted">${esc(b.reason)}</span> <button class="ghost small" data-a="restoreSnap" data-id="${b.id}">Revenir à cette version</button></li>`).join('')}</ul>` : '<p class="muted small">Aucune pour l\'instant.</p>'}</section>`;
+    h += `<section class="card" id="sec-cal-export"><h2>Agenda dans le calendrier du téléphone</h2>
+      <p class="small">Télécharge un fichier calendrier (.ics) avec vos cours et vos séances d'aujourd'hui à la fin de l'année, à ouvrir avec Google Agenda, le calendrier de l'iPhone ou Outlook. C'est une photo à un instant donné : refaites l'export après de gros changements.</p>
+      <button class="ghost" data-a="exportIcs">Exporter l'agenda (.ics)</button></section>`;
     h += `<section class="card" id="sec-data"><h2>Données</h2>
       <p class="small">Les données sont enregistrées dans ce navigateur. Exportez-les régulièrement ; la synchronisation en ligne entre appareils viendra avec l'hébergement.</p>
       <p class="small muted">Dernier export : ${st.lastExport ? esc(fmt(st.lastExport)) : 'jamais'}</p>
@@ -1596,6 +1715,40 @@ Mardi | 8h00-9h50 | Co-intervention | CAP1 Mét + CAP1 Peint | - | Q1 | - | Zabe
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   }
+  // Texte brut d'un cours : séances (toutes classes / groupes), pour le calendrier et le cahier de textes
+  const plainSeance = (s, cont) => `${numTxt(s)}${cont ? ' (suite)' : ''}`;
+  function hourPlain(x) {
+    const o = E.plan().occ[x.id];
+    if (!o || !o.seanceId) return '';
+    if (o.multi) return o.multi.map(m => { const s = seanceById(m.seanceId); return s ? `${classById(m.classId)?.short} : ${plainSeance(s, m.cont)}` : ''; }).filter(Boolean).join(' / ');
+    if (o.split) return o.split.map(m => { const s = seanceById(m.seanceId); return s ? `${m.group} : ${plainSeance(s, m.cont)}` : ''; }).filter(Boolean).join(' / ');
+    const s = seanceById(o.seanceId); return s ? plainSeance(s, o.cont) : '';
+  }
+  function blockPlain(b) {
+    const typ = b.type === 'ap' ? 'AP ' : b.type === 'coint' ? 'Co-intervention ' : '';
+    const what = [...new Set(b.hours.filter(x => x.counts && !(S.occ[x.id] && S.occ[x.id].cancelled)).map(hourPlain).filter(Boolean))].join(' ; ');
+    return { title: `${typ}${blockNames(b) || b.label}${b.group ? ' ' + b.group : ''}`, what };
+  }
+  function exportIcs() {
+    const z = s => s.replace(/[-:]/g, ''), escI = s => String(s).replace(/([,;\\])/g, '\\$1').replace(/\n/g, '\\n');
+    const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Pilotage pedagogique//FR', 'CALSCALE:GREGORIAN', 'X-WR-CALNAME:Cours'];
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z';
+    let n = 0;
+    for (let d = today(); d <= S.settings.finAnnee; d = addDays(d, 1)) {
+      for (const b of E.blocksOn(d)) {
+        if (b.blocked || b.hours.every(x => S.occ[x.id] && S.occ[x.id].cancelled)) continue;
+        const { title, what } = blockPlain(b);
+        lines.push('BEGIN:VEVENT', `UID:${b.id}@pilotage`, `DTSTAMP:${stamp}`, `DTSTART:${z(d)}T${z(b.start)}00`, `DTEND:${z(d)}T${z(b.end)}00`,
+          `SUMMARY:${escI(what ? `${title} — ${what}` : title)}`, ...(b.note ? [`DESCRIPTION:${escI(b.note)}`] : []), 'END:VEVENT');
+        n++;
+      }
+    }
+    lines.push('END:VCALENDAR');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([lines.join('\r\n')], { type: 'text/calendar' })); a.download = `agenda-cours-${today()}.ics`;
+    document.body.appendChild(a); a.click(); a.remove();
+    toast(`${n} cours exportés dans le fichier calendrier.`);
+  }
   function exportData() {
     S.settings.lastExport = today();
     persist();
@@ -1669,6 +1822,52 @@ Mardi | 8h00-9h50 | Co-intervention | CAP1 Mét + CAP1 Peint | - | Q1 | - | Zabe
     threat: t => openModal(threatModal(t.dataset.id)),
     syncMenu: () => openModal(syncModal),
     syncNow: () => SY.pull(),
+    exportIcs: () => exportIcs(),
+    validateAll: () => {
+      const ids = E.unvalidatedList(); if (!ids.length) return;
+      const prev = Object.fromEntries(ids.map(id => [id, S.occ[id] ? { ...S.occ[id] } : null]));
+      for (const id of ids) setOcc(id, r => { r.status = 'realisee'; });
+      closeModal(); save();
+      toast(`${ids.length} cours marqués réalisés.`, () => { for (const [id, r] of Object.entries(prev)) { if (r) S.occ[id] = r; else delete S.occ[id]; } save(); });
+    },
+    print: () => window.print(),
+    pastAll: t => { UI.pastAll = t.dataset.id; UI.pastOpen = t.dataset.id; render(); },
+    refreeze: () => {
+      const c = classById(UI.progClass); if (!c) return;
+      if (!confirm(`Figer la progression actuelle de ${c.short} comme nouvelle référence ?\nL'avance et le retard seront calculés à partir d'aujourd'hui, sur les dates actuelles.`)) return;
+      const p = E.plan();
+      const seqs = E.orderedSequences(c.id).map(q => {
+        const se = E.orderedSeancesOf(q.id).filter(s => !s.skipped).map(s => ({ title: s.title, date: (p.seance[s.id] || {}).firstDate || null }));
+        return { title: q.title, hours: se.length, start: se[0] ? se[0].date : null, end: se.length ? se[se.length - 1].date : null, seances: se };
+      }).filter(q => q.seances.length);
+      const ini = { importedAt: today(), source: 'progression en cours', capacity: (p.perClass[c.id] || {}).capacity || 0, sequences: seqs };
+      ini.text = iniText(ini);
+      S.initial[c.id] = ini; save(); toast('Progression figée comme nouvelle référence.');
+    },
+    libSearch: () => { UI.libQuery = (document.getElementById('libSearch').value || '').trim(); render(); },
+    libSearchClear: () => { UI.libQuery = ''; render(); },
+    copyCahier: t => {
+      const [src, date] = t.dataset.id.split('@');
+      const b = E.blocksOn(date).find(x => x.srcId === src); if (!b) return;
+      const { title, what } = blockPlain(b);
+      const hw = S.homework[b.id];
+      copy([`${title} — ${fmtLong(date)}, ${hm(b.start)}–${hm(b.end)}`, what ? `Séance : ${what}` : '', b.note ? `Contenu : ${b.note}` : '', hw ? `Travail à faire : ${hw}` : ''].filter(Boolean).join('\n'), 'Texte du cahier de textes', 'Pronote');
+    },
+    markPrepared: t => { const s = seanceById(t.dataset.id); if (s) { s.prepared = true; save(); toast('Séance marquée préparée.'); } },
+    forgotPwd: async () => {
+      const email = (document.querySelector('form[data-form="login"] [name="email"]').value || '').trim();
+      if (!email) { toast('Tapez d\'abord votre adresse e-mail.'); return; }
+      try { await SY.resetPassword(email); toast('E-mail envoyé : ouvrez le lien qu\'il contient pour choisir un nouveau mot de passe.'); }
+      catch (err) { toast('Envoi impossible : ' + err.message); }
+    },
+    restoreSnap: t => {
+      const b = snapshots().find(x => x.id === t.dataset.id); if (!b) return;
+      if (!confirm(`Revenir à la version du ${new Date(b.at).toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'short' })} ?\nLa version actuelle est gardée dans la liste, vous pourrez y revenir.`)) return;
+      snapshot('avant retour à une version précédente', true);
+      const arch = S.archives;
+      S = migrate(clone(b.data)); S.archives = arch || [];
+      persist(); render(); toast('Version restaurée.');
+    },
     signOut: async () => { if (!confirm('Se déconnecter ? Les données restent sur cet appareil.')) return; await SY.signOut(); drawModal(); },
     makeUp: t => openModal(slotForm(null, true, { classIds: [t.dataset.cls], type: t.dataset.type || 'cours', start: t.dataset.s, end: t.dataset.e, date: today(), makeUpFor: t.dataset.h })),
     progClassEff: t => { UI.progSub = 'effective'; UI.progClass = t.dataset.id; render(); scrollTo(0, 0); },
@@ -1713,6 +1912,7 @@ Mardi | 8h00-9h50 | Co-intervention | CAP1 Mét + CAP1 Peint | - | Q1 | - | Zabe
     reset: () => {
       if (!confirm('Effacer toutes les données de ce navigateur ? Exportez d\'abord une sauvegarde si besoin.')) return;
       if (!confirm('Confirmer : tout effacer définitivement ?')) return;
+      snapshot('avant effacement', true);
       S = migrate(defaultState()); persist(); render(); toast('Données effacées.');
     },
 
@@ -1847,7 +2047,13 @@ Mardi | 8h00-9h50 | Co-intervention | CAP1 Mét + CAP1 Peint | - | Q1 | - | Zabe
       next.classes = S.classes.map(c => ({ ...c, startDate: '' }));
       next.prompts = S.prompts;
       if (keepEdt) next.slots = clone(S.slots);
-      next.settings = { ...next.settings, rentree: addYear(st.rentree), finAnnee: addYear(st.finAnnee), s2Start: addYear(st.s2Start), zone: st.zone, skipVacations: st.skipVacations, holidaysYear: '', holidaysSource: '', lastExport: st.lastExport };
+      // Reprendre les séquences et les séances (avec liens vers les fiches et remarques), sans les validations
+      if (document.getElementById('keepProg').checked) {
+        next.sequences = S.sequences.map(q => ({ ...q, convUrl: '' }));
+        next.seances = S.seances.map(s => { const { corrected, graded, skipped, ...rest2 } = s; return { ...rest2, prepared: false }; });
+      }
+      snapshot('avant archivage de l\'année', true);
+      next.settings = { ...next.settings, rentree: addYear(st.rentree), finAnnee: addYear(st.finAnnee), s2Start: addYear(st.s2Start), zone: st.zone, skipVacations: st.skipVacations, holidaysYear: '', holidaysSource: '', lastExport: st.lastExport, patches: st.patches || [], autoDone: !!st.autoDone };
       next.settings.weekAnchors = [{ monday: mondayOf(next.settings.rentree), type: 1 }];
       next.holidays = PE.FALLBACK_HOLIDAYS[`${next.settings.rentree.slice(0, 4)}-${next.settings.finAnnee.slice(0, 4)}`] || [];
       S = next; persist(); render(); ensureHolidays(true);
@@ -1879,6 +2085,20 @@ Mardi | 8h00-9h50 | Co-intervention | CAP1 Mét + CAP1 Peint | - | Q1 | - | Zabe
     prepared: t => { seanceById(t.dataset.id).prepared = t.checked; save(); },
     seanceTitle: t => { const v = t.value.trim(); if (v) { seanceById(t.dataset.id).title = v; commit(); render(); } },
     seanceKind: t => { seanceById(t.dataset.id).kind = t.value; save(); },
+    evalFlag: t => { const s = seanceById(t.dataset.id); if (s) { s[t.dataset.f] = t.checked; save(); } },
+    hstatus: t => {
+      const v = t.value;
+      setOcc(t.dataset.h, r => { delete r.status; delete r.cancelled; delete r.moved; if (v === 'annule') r.cancelled = true; else if (v) r.status = v; });
+      save();
+    },
+    seanceField: t => {
+      const s = seanceById(t.dataset.id); if (!s) return;
+      const v = t.value.trim();
+      if (t.dataset.f === 'docUrl' && v && !/^https?:\/\//i.test(v)) { toast('Le lien doit commencer par https://'); return; }
+      if (v) s[t.dataset.f] = v; else delete s[t.dataset.f];
+      save();
+    },
+    homework: t => { const v = t.value.trim(); if (v) S.homework[t.dataset.id] = v; else delete S.homework[t.dataset.id]; commit(); },
     pin: t => { setOcc(t.dataset.h, r => { if (t.value) r.pin = t.value; else delete r.pin; }); save(); toast(t.value ? 'Séance fixée sur ce cours ; le reste de la progression suit son ordre.' : 'Retour à l\'ordre de la progression.'); },
     note: t => { const v = t.value.trim(); if (v) S.notes[t.dataset.id] = v; else delete S.notes[t.dataset.id]; save(); },
     pv: t => {
@@ -1946,6 +2166,14 @@ Mardi | 8h00-9h50 | Co-intervention | CAP1 Mét + CAP1 Peint | - | Q1 | - | Zabe
         } catch (err) { toast(/invalid login/i.test(err.message) ? 'Adresse ou mot de passe incorrect.' : 'Connexion impossible : ' + err.message); }
       })();
       return;
+    } else if (kind === 'libSearch') {
+      UI.libQuery = (document.getElementById('libSearch').value || '').trim(); render(); return;
+    } else if (kind === 'newpwd') {
+      (async () => {
+        try { await SY.updatePassword(fd.get('password') || ''); closeModal(); toast('Mot de passe modifié.'); }
+        catch (err) { toast('Impossible de changer le mot de passe : ' + err.message); }
+      })();
+      return;
     } else if (kind === 'eval') {
       const v = { sequenceId: f.dataset.seq, type: fd.get('type') || 'fin', duration: (fd.get('duration') || '').trim() || '1 h', seanceIds: fd.getAll('sea'), date: fd.get('date') || '' };
       let ev = id && S.evaluations.find(x => x.id === id);
@@ -1979,6 +2207,7 @@ Mardi | 8h00-9h50 | Co-intervention | CAP1 Mét + CAP1 Peint | - | Q1 | - | Zabe
         const data = j && j.data && j.app === 'pilotage-pedagogique' ? j.data : null;
         if (!data || !Array.isArray(data.classes)) throw new Error('format');
         if (!confirm(`Restaurer la sauvegarde du ${j.exportedAt ? new Date(j.exportedAt).toLocaleDateString('fr-FR') : '?'} ? Les données actuelles seront remplacées.`)) return;
+        snapshot('avant restauration d\'un fichier', true);
         S = migrate(data); persist(); render(); toast('Sauvegarde restaurée.');
       } catch (e) { toast("Ce fichier n'est pas une sauvegarde valide."); }
     };
@@ -2001,6 +2230,7 @@ Mardi | 8h00-9h50 | Co-intervention | CAP1 Mét + CAP1 Peint | - | Q1 | - | Zabe
     if (Math.abs(dx) > 60 && Math.abs(dx) > 1.5 * Math.abs(dy)) stepDate(dx < 0 ? 1 : -1);
   });
   document.addEventListener('toggle', e => {
+    if (e.target.dataset && e.target.dataset.past) UI.pastOpen = e.target.open ? e.target.dataset.past : null;
     if (e.target.id === 'dash') try { localStorage.setItem('pedago.ui.dash', e.target.open ? '1' : '0'); } catch (_) { /* ignore */ }
   }, true);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && modalFn) closeModal(); });

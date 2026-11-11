@@ -231,8 +231,10 @@
       stats.capacity = hours.filter(h => !(st.occ[h.id] && st.occ[h.id].cancelled)).length;
       stats.capacityFromToday = hours.filter(h => h.date >= t && !(st.occ[h.id] && st.occ[h.id].cancelled)).length;
       for (const h of hours) {
-        const rec = st.occ[h.id] || {};
+        const rec0 = st.occ[h.id] || {};
         const past = h.date < t || (h.date === t && toMin(h.end) <= nm);
+        // Réglage « réalisé par défaut » : un cours passé sans indication est compté comme réalisé
+        const rec = st.settings.autoDone && past && !rec0.status && !rec0.cancelled && !rec0.reserved ? { ...rec0, status: 'realisee' } : rec0;
         if (rec.cancelled) { occ[h.id] = { cancelled: true, classId: c.id }; stats.lost++; continue; }
         if (rec.reserved) { occ[h.id] = { reserved: true, classId: c.id, past }; stats.reserved++; if (!past) stats.reservedFuture++; continue; }
         // Séance fixée sur ce créneau (ex. séquence de co-intervention) : elle ne suit pas l'ordre de la bibliothèque
