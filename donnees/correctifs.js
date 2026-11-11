@@ -379,4 +379,44 @@ window.PATCHES = [{
     }
     return true;
   },
+}, {
+  id: '2026-11-11-j',
+  label: '1MV PC : révision des ondes avant la Toussaint, pression à partir du 30 nov.',
+  apply(S, h) {
+    const { E, uid, norm, bump } = h;
+    const byOrder = (a, b) => a.order - b.order;
+    const pc = S.classes.find(c => c.id === 'c1mvpc');
+    const seqs = S.sequences.filter(q => q.classId === 'c1mvpc').sort(byOrder);
+    const ondes = seqs[0];
+    if (!pc || !ondes || !norm(ondes.title).startsWith('ondes')) return false;
+    const ss = S.seances.filter(s => s.sequenceId === ondes.id).sort(byOrder);
+    if (ss.some(s => s.kind === 'revision' || /^r[ée]vision/i.test(s.title))) return false;
+    S.seances.push({ id: uid(), sequenceId: ondes.id, title: 'Révision : ondes électromagnétiques', kind: 'revision', prepared: true, order: ss.length });
+    // Les cours ont commencé le 21 septembre : 6 h par groupe avant la Toussaint pour les 4 activités et la révision
+    pc.startDate = '2026-09-21';
+    const dateOf = hid => hid.split('@')[1].split('#')[0];
+    const pcSlots = new Set(S.slots.filter(s => s.classIds.includes('c1mvpc')).map(s => s.id));
+    for (const k of Object.keys(S.occ)) if (pcSlots.has(k.split('@')[0]) && dateOf(k) < '2026-11-01' && S.occ[k].status) {
+      delete S.occ[k].status; if (!Object.keys(S.occ[k]).length) delete S.occ[k];
+    }
+    bump();
+    const byGroup = {};
+    for (let d = '2026-09-21'; d <= '2026-10-16'; d = h.addDays(d, 1))
+      for (const b of E.blocksOn(d)) if (b.classIds.includes('c1mvpc') && !b.blocked) for (const x of b.hours) if (x.counts) (byGroup[b.group || ''] ||= []).push(x.id);
+    // Première activité sur 2 h (non terminée puis réalisée), le reste réalisé
+    for (const list of Object.values(byGroup)) list.forEach((hid, i) => { S.occ[hid] = { ...(S.occ[hid] || {}), status: i === 0 && list.length > 5 ? 'non_terminee' : 'realisee' }; });
+    // Progression initiale : dates recalculées (pression à partir du 30 nov., la suite se décale)
+    bump();
+    const p = E.plan();
+    const ini = S.initial.c1mvpc;
+    if (ini) {
+      ini.sequences = S.sequences.filter(q => q.classId === 'c1mvpc').sort(byOrder).map(q => {
+        const se = S.seances.filter(s => s.sequenceId === q.id && !s.skipped).sort(byOrder).map(s => ({ title: s.title, date: (p.seance[s.id] || {}).firstDate || null }));
+        return { title: q.title, hours: se.length, start: se[0] ? se[0].date : null, end: se.length ? se[se.length - 1].date : null, seances: se };
+      });
+      ini.capacity = (p.perClass.c1mvpc || {}).capacity || ini.capacity;
+      ini.text = h.iniText(ini);
+    }
+    return true;
+  },
 }];

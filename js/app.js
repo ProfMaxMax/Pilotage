@@ -101,7 +101,7 @@
     const applied = [];
     for (const p of window.PATCHES || []) {
       if (done.includes(p.id)) continue;
-      try { if (p.apply(S, { E, uid, norm, iniText, bump: () => { S._rev++; } })) applied.push(p.label); }
+      try { if (p.apply(S, { E, uid, norm, iniText, addDays, bump: () => { S._rev++; } })) applied.push(p.label); }
       catch (e) { console.error('Correctif ' + p.id, e); }
       done.push(p.id);
     }
@@ -319,9 +319,7 @@
         ${v === 'day' || week ? `<span class="semtag">${E.semesterOf(UI.date)}</span>
         <button class="pill" data-a="switchWeek" title="Aller à la prochaine semaine ${E.weekLabel(other)}">→ ${E.weekLabel(other)}</button>
         <button class="pill" data-a="forceWeek" title="Dire si cette semaine est Q1 ou Q2">Corriger</button>` : ''}</div>
-      ${unv.length ? `<button class="warnbtn" data-a="unvalidated">À valider (${unv.length})</button>` : ''}
-      ${v !== 'year' ? `<button class="pill noprint" data-a="print" title="Imprimer ou enregistrer en PDF">🖨 Imprimer</button>` : ''}
-    </div>`;
+      ${unv.length ? `<button class="warnbtn" data-a="unvalidated">À valider (${unv.length})</button>` : ''}    </div>`;
     h += `<div id="swipe">${{ day: dayView, week: weekView, month: monthView, year: yearView }[v]()}</div>`;
     return h;
   }
@@ -447,8 +445,9 @@
   /* ---------- Tableau de bord ---------- */
   function deltaText(delta, unv) {
     if (delta == null) return '';
-    if (delta === 0) return `<span class="dl ok">dans les temps</span>`;
-    if (delta > 0) return `<span class="dl ok">+${delta} h d'avance</span>`;
+    const tip = 'title="Comparaison avec la progression figée, à la date d\'aujourd\'hui : séances faites − séances qui devaient être faites."';
+    if (delta === 0) return `<span class="dl ok" ${tip}>à jour sur le plan</span>`;
+    if (delta > 0) return `<span class="dl ok" ${tip}>${delta} h d'avance sur le plan</span>`;
     const pend = Math.min(unv || 0, -delta);
     if (pend === -delta) return `<span class="dl warn">${pend} cours à valider</span>`;
     return `<span class="dl bad">${-delta} h de retard${pend ? `, dont ${pend} à valider` : ''}</span>`;
@@ -464,9 +463,8 @@
       const up = E.upcoming(c.id, 2);
       return `<div class="dc" style="--cc:${classColor(c.id)}">
         <div class="dch"><b>${esc(c.short)}</b>${deltaText(k.delta, k.unvalidated)}</div>
-        <div class="dcn"><span title="heures prévues">Prévu ${planned} h</span> · <span title="heures réalisées">fait ${k.done} h</span> · <span title="séances restantes">reste ${k.remainingSeances} h</span></div>
-        <div class="dcn">Séquences terminées : ${k.seqDone} / ${k.seqTotal}</div>
-        <div class="dcn">${futureSplit(c.id, k)}</div>
+        <div class="dcn"><b>Programme : ${k.seances} h</b> · fait ${k.seances - k.remainingSeances} · <b>reste ${k.remainingSeances} h</b> · séquences ${k.seqDone} / ${k.seqTotal}</div>
+        ${futureSplit(c.id, k)}
         ${k.margin < 0 || k.unplaced ? `<a href="#" class="dcn threat" data-a="threat" data-id="${c.id}">⚠ Programme menacé : ${k.unplaced ? `${k.unplaced} séance(s) sans créneau` : `il manque ${-k.margin} h`}${k.tracks ? ` (${esc(k.worstGroup)})` : ''} — voir</a>` : ''}
         ${up.map(u => { const s = seanceById(u.occ.seanceId); return `<a href="#" class="dcu" data-a="openSeance" data-id="${s.id}">${esc(fmt(u.hour.date))} · ${esc(numTxt(s))}</a>`; }).join('')}
       </div>`;
@@ -962,7 +960,7 @@ Séquence 2 – Statistiques
         ${tile((k.seances || 0) + ' h', 'le programme (une séance = 1 h)')}
         ${tile((k.done || 0) + ' h', 'faites')}
         ${tile((k.remainingSeances || 0) + ' h', 'reste à faire')}
-        ${tile((k.availableHours || 0) + ' h', `de cours pour le programme d'ici la fin${k.unvalidated ? ` (dont ${k.unvalidated} passées à valider)` : ''}`)}
+        ${tile((k.availableHours || 0) + ' h', `pour le finir : ${progHours(c.id, k).text}`)}
         ${tile((m > 0 ? '+' : '') + m + ' h', m >= 0 ? 'de marge : heures libres en fin d\'année' : 'qui manquent pour finir', m < 0 ? 'bad' : '')}
       </div>
       <p class="small muted">${y.lastDate ? `Dernière séance prévue : ${esc(fmt(y.lastDate, { weekday: 'long', day: 'numeric', month: 'long' }))}. ` : ''}AP et co-intervention ne font avancer le programme que si vous y placez une séance (dans l'agenda, bouton « → Faire des maths »). Il vous reste ${y.apFree} h d'AP et ${y.cointFree} h de co-intervention sans séance prévue.</p></section>`;
@@ -972,9 +970,21 @@ Séquence 2 – Statistiques
     if (hbCache.rev !== S._rev || hbCache.s !== S) { hbCache.rev = S._rev; hbCache.s = S; hbCache.map = {}; }
     return hbCache.map[cid] ||= hoursBreakdown(cid);
   }
+  /* D'où viennent les heures qui servent au programme : cours de maths, plus les AP et co-interventions
+     où une séance est placée. Les autres AP / co-interventions sont en réserve (elles ne comptent pas). */
+  function progHours(cid, k) {
+    const y = yearSummary(cid), r = y.r;
+    const parts = [`${r.cours[1]} de cours`];
+    if (r.apProg[1]) parts.push(`${r.apProg[1]} AP`);
+    if (r.cointProg[1]) parts.push(`${r.cointProg[1]} co-int.`);
+    if (k.unvalidated) parts.push(`${k.unvalidated} passées à valider`);
+    return { y, text: parts.join(' + ') };
+  }
   function futureSplit(cid, k) {
-    const y = yearSummary(cid), m = k.margin || 0;
-    return `À venir : <b>${y.r.cours[1]} h maths</b> · ${y.r.ap[1]} h AP · ${y.r.coint[1]} h co-int. · <span class="${m < 0 ? 'bad' : ''}">marge ${m > 0 ? '+' : ''}${m} h</span>`;
+    const { y, text } = progHours(cid, k), m = k.margin || 0;
+    return `<div class="dcn">Heures pour le finir : <b>${k.availableHours} h</b> <span class="muted">(${text})</span></div>
+      <div class="dcn ${m < 0 ? 'bad' : ''}" title="Heures pour finir − heures de programme restantes"><b>Marge en fin d'année : ${m > 0 ? '+' : ''}${m} h</b></div>
+      <div class="dcn muted">En réserve, sans séance : ${y.apFree} h AP · ${y.cointFree} h co-int.</div>`;
   }
   // Cours de maths perdus (annulés, déplacés, absences) — pour comprendre un retard
   function lostHours(cid) {
