@@ -413,8 +413,35 @@
       return { start, end };
     }
 
+    /* Séances sans créneau : on cherche les DERNIÈRES heures d'AP de l'année (du groupe qui en manque) qui,
+       transformées en maths, permettraient de tout finir. À appeler sur une COPIE des données : l'application
+       montre la liste et ne l'applique qu'après confirmation. Rend la liste des heures concernées. */
+    function fillWithLastAP(classId, bump) {
+      const st = S(), t = today();
+      const done = [];
+      for (let guard = 0; guard < 8; guard++) {
+        bump();
+        const k = plan().perClass[classId];
+        if (!k || !k.unplaced) break;
+        const groups = k.tracks ? k.tracks.filter(x => x.unplaced > 0).map(x => x.group) : null;
+        let best = null;
+        for (let d = st.settings.finAnnee; d >= t && !best; d = addDays(d, -1)) {
+          for (const b of blocksOn(d)) {
+            if (b.type !== 'ap' || b.classIds.length !== 1 || b.classIds[0] !== classId || b.blocked || classBlocked(d, classId)) continue;
+            if (groups && b.group && !groups.includes(b.group)) continue;
+            for (const x of b.hours) if (!x.counts && !(st.occ[x.id] && st.occ[x.id].cancelled) && (!best || x.start > best.start)) best = x;
+          }
+        }
+        if (!best) break;
+        st.occ[best.id] = { ...(st.occ[best.id] || {}), counts: true };
+        done.push(best.id);
+      }
+      bump();
+      return done;
+    }
+
     return {
-      projectDates, upcoming, compare, sequenceSpan, tracksOf, semesterOf, weekLabel, anchors,
+      fillWithLastAP, projectDates, upcoming, compare, sequenceSpan, tracksOf, semesterOf, weekLabel, anchors,
       plan, blocksOn, dayOff, classBlocked, eventsOn, weekType, holidayLabel,
       orderedSequences, orderedSeancesOf, orderedSeances, seanceStatus, unvalidatedList,
     };

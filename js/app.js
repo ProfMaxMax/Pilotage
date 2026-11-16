@@ -235,7 +235,33 @@
     if (!rows.length) return '';
     return `<section class="card unplaced"><h2>⚠ Séances non placées (${rows.length})</h2>
       <p class="small">Elles ne trouvent plus de créneau avant la fin de l'année. Pour les placer : transformer une AP en maths (bouton « → Faire des maths » dans l'agenda), ajouter un cours ponctuel, ou les fusionner / retirer.</p>
-      <ul class="plain">${rows.map(r => `<li><b>${esc(r.c.short)}</b> · Séq. ${seqNum(seqById(r.s.sequenceId))} · <a href="#" data-a="openSeance" data-id="${r.s.id}">${seanceLabel(r.s, false)}</a></li>`).join('')}</ul></section>`;
+      <ul class="plain">${rows.map(r => `<li><b>${esc(r.c.short)}</b> · Séq. ${seqNum(seqById(r.s.sequenceId))} · <a href="#" data-a="openSeance" data-id="${r.s.id}">${seanceLabel(r.s, false)}</a></li>`).join('')}</ul>
+      <div class="row">${[...new Set(rows.map(r => r.c.id))].map(id => `<button data-a="fillAP" data-id="${id}">${esc(classById(id).short)} : voir quelles AP utiliser…</button>`).join('')}</div></section>`;
+  }
+  // Proposition (jamais appliquée sans confirmation) : quelles AP de fin d'année transformer en maths pour tout finir
+  function apProposal(cid) {
+    const st = clone(S); st._rev = 1;
+    const E2 = PE.Engine(() => st);
+    const hids = E2.fillWithLastAP(cid, () => { st._rev++; });
+    return { hids, left: (E2.plan().perClass[cid] || {}).unplaced || 0 };
+  }
+  function apConfirmModal(cid) {
+    return () => {
+      const c = classById(cid), k = E.compare(cid) || {};
+      if (!k.unplaced) return `<h2>${esc(c.short)}</h2><p>✓ Toutes les séances ont un créneau : rien à transformer.</p>`;
+      const pr = apProposal(cid), n = pr.hids.length;
+      if (!n) return `<h2>${esc(c.short)} : ${k.unplaced} séance(s) sans créneau</h2>
+        <p>Il n'y a plus d'heure d'AP disponible d'ici la fin de l'année. Il faudra fusionner ou retirer des séances, ou ajouter un cours ponctuel.</p>
+        <div class="row"><button data-a="reorgFor" data-id="${cid}">Proposer une réorganisation</button></div>`;
+      const rows = pr.hids.map(hid => { const i = hourInfo(hid); return i ? `<li><b>${esc(fmtLong(i.date))}</b>, ${hm(i.hour.start)}–${hm(i.hour.end)} · AP${i.block.group ? ' ' + esc(i.block.group) : ''}${i.block.note ? ` <span class="muted">(prévu : ${esc(i.block.note)})</span>` : ''}</li>` : ''; }).join('');
+      return `<h2>${esc(c.short)} : finir le programme sur des heures d'AP ?</h2>
+        <p>Il manque <b>${k.unplaced} h</b>${k.tracks ? ` (groupe ${esc(k.worstGroup)})` : ''} : ${k.unplaced > 1 ? 'les dernières séances' : 'la dernière séance'} de l'année n'${k.unplaced > 1 ? 'ont' : 'a'} pas de créneau.
+        Pour tout finir, ${n > 1 ? `ces ${n} heures d'AP deviendraient des heures de maths` : 'cette heure d\'AP deviendrait une heure de maths'} :</p>
+        <ul class="plain">${rows}</ul>
+        ${pr.left ? `<p class="bad">Même ainsi, ${pr.left} séance(s) resteraient sans créneau.</p>` : ''}
+        <p class="small muted">Rien n'est changé tant que vous ne confirmez pas. Chaque heure transformée reste visible dans l'agenda, avec « ↩ Remettre en AP » pour revenir en arrière.</p>
+        <div class="row"><button data-a="fillAPok" data-id="${cid}">Oui, transformer ${n > 1 ? `ces ${n} AP` : 'cette AP'} en maths</button><button class="ghost" data-a="closeModal">Non, je verrai plus tard</button></div>`;
+    };
   }
   function renderTodo() {
     const p = E.plan(), t = today(), rows = [];
@@ -1038,7 +1064,7 @@ Séquence 2 – Statistiques
         ${lost.length ? `<ul class="plain">${lost.map(x => `<li>${link(x.date)} ${hm(x.start)} — ${esc(x.why)}</li>`).join('')}</ul>` : '<p class="small muted">Aucun.</p>'}
         <h3>Pour rattraper</h3>
         <ul class="plain">
-          ${y.apFree ? `<li>${y.apFree} h d'AP à venir : dans l'agenda, bouton « → Faire des maths » sur une AP.</li>` : ''}
+          ${y.apFree ? `<li>${y.apFree} h d'AP à venir : dans l'agenda, bouton « → Faire des maths » sur une AP${k.unplaced ? `, ou <a href="#" data-a="fillAP" data-id="${cid}">voir quelles AP de fin d'année utiliser</a> (à confirmer)` : ''}.</li>` : ''}
           ${y.cointFree ? `<li>${y.cointFree} h de co-intervention à venir : même bouton, si la séance s'y prête.</li>` : ''}
         </ul>
         <div class="row"><button data-a="reorgFor" data-id="${cid}">Proposer une réorganisation</button></div>`;
@@ -1850,6 +1876,13 @@ Mardi | 8h00-9h50 | Co-intervention | CAP1 Mét + CAP1 Peint | - | Q1 | - | Zabe
     syncMenu: () => openModal(syncModal),
     syncNow: () => SY.pull(),
     exportIcs: () => exportIcs(),
+    fillAP: t => openModal(apConfirmModal(t.dataset.id)),
+    fillAPok: t => {
+      const c = classById(t.dataset.id), { hids } = apProposal(c.id);
+      for (const hid of hids) setOcc(hid, r => { r.counts = true; r.apToMaths = true; });
+      closeModal(); save();
+      toast(`${c.short} : ${hids.length} heure${hids.length > 1 ? 's' : ''} d'AP transformée${hids.length > 1 ? 's' : ''} en maths.`);
+    },
     validateAll: () => {
       const ids = E.unvalidatedList(); if (!ids.length) return;
       const prev = Object.fromEntries(ids.map(id => [id, S.occ[id] ? { ...S.occ[id] } : null]));
