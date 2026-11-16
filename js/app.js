@@ -224,6 +224,19 @@
   }
 
   /* ---------- À faire : prochaines séances à préparer, toutes classes ---------- */
+  // Séances qui ne trouvent aucun créneau avant la fin de l'année : jamais posées sur une date, listées ici
+  function unplacedList(cid) {
+    const p = E.plan();
+    return E.orderedSeances(cid).filter(s => !s.skipped && (p.seance[s.id] || {}).unplaced);
+  }
+  function unplacedCard(cid) {
+    const ids = cid ? [cid] : S.classes.map(c => c.id);
+    const rows = ids.flatMap(id => unplacedList(id).map(s => ({ c: classById(id), s })));
+    if (!rows.length) return '';
+    return `<section class="card unplaced"><h2>⚠ Séances non placées (${rows.length})</h2>
+      <p class="small">Elles ne trouvent plus de créneau avant la fin de l'année. Pour les placer : transformer une AP en maths (bouton « → Faire des maths » dans l'agenda), ajouter un cours ponctuel, ou les fusionner / retirer.</p>
+      <ul class="plain">${rows.map(r => `<li><b>${esc(r.c.short)}</b> · Séq. ${seqNum(seqById(r.s.sequenceId))} · <a href="#" data-a="openSeance" data-id="${r.s.id}">${seanceLabel(r.s, false)}</a></li>`).join('')}</ul></section>`;
+  }
   function renderTodo() {
     const p = E.plan(), t = today(), rows = [];
     for (const c of S.classes) for (const s of E.orderedSeances(c.id)) {
@@ -233,7 +246,7 @@
     }
     rows.sort((a, b) => a.date.localeCompare(b.date));
     const list = rows.slice(0, 25);
-    return `<section class="card"><h2>À préparer</h2>
+    return unplacedCard(null) + `<section class="card"><h2>À préparer</h2>
       <p class="small muted">Les prochaines séances pas encore préparées, toutes classes confondues.</p>
       ${list.length ? `<ul class="plain">${list.map(r => `<li style="--cc:${classColor(r.c.id)}"><b>${esc(fmt(r.date))}</b> · <b>${esc(r.c.short)}</b> · <a href="#" data-a="openSeance" data-id="${r.s.id}">${seanceLabel(r.s, false)}</a>
         <span class="row"><button class="ghost small" data-a="copySeance" data-id="${r.s.id}">Copier le prompt</button><button class="ghost small" data-a="markPrepared" data-id="${r.s.id}">☐ Préparée</button></span></li>`).join('')}</ul>` : '<p class="muted">Tout est préparé.</p>'}
@@ -438,6 +451,8 @@
     let h = `<div class="dayhead">${dayBadges(d)}</div>`;
     if (!bs.length) h += `<div class="empty">${off ? esc(off) : 'Pas de cours ce jour.'}</div>`;
     h += `<div class="daylist">${bs.map(b => blockHtml(b, false)).join('')}</div>`;
+    if (!off) h += `<div class="row"><button class="ghost small" data-a="dayOffForm" data-d="${d}">Journée sans cours…</button>
+      <span class="small muted">Pour déplacer un cours à une autre date : cliquez sur le cours (⋯), puis « Déplacer ce cours à une autre date ».</span></div>`;
     h += `<p class="hint phone-only">Glissez vers la gauche ou la droite pour changer de jour.</p>`;
     return h;
   }
@@ -630,7 +645,7 @@
         const ids = b.hours.map(x => x.id).join(',');
         const allCancelled = b.hours.every(x => S.occ[x.id] && S.occ[x.id].cancelled);
         h += `<p class="row"><button class="ghost" data-a="cancelHours" data-ids="${ids}" data-v="${allCancelled ? 0 : 1}">${allCancelled ? 'Rétablir le cours' : 'Annuler ce cours'}</button></p>`;
-        if (!allCancelled) h += `<details class="edit"><summary>Déplacer ce cours</summary>
+        if (!allCancelled) h += `<details class="edit" open><summary>Déplacer ce cours à une autre date</summary>
           <form class="form" data-form="move" data-id="${b.id}">
             <label>Nouvelle date <input type="date" name="date" value="${date}" required></label>
             <label>Début <input type="time" name="start" value="${b.start}" required></label>
@@ -1330,6 +1345,7 @@ Séquence 2 – Statistiques
     if (!ini) h += `<div class="banner">Pas encore de progression initiale figée pour ${esc(c.short)} : la comparaison avance / retard apparaîtra après l'import. <button class="ghost" data-a="progSub" data-v="initiale">Importer</button></div>`;
     h += reorgHtml(c, k);
     h += pastJournal(c);
+    h = unplacedCard(c.id) + h;
     const seqs = E.orderedSequences(c.id);
     if (!seqs.length) h += `<div class="empty">Aucune séance pour cette classe.</div>`;
     seqs.forEach((q, i) => {
@@ -1668,11 +1684,12 @@ Mardi | 8h00-9h50 | Co-intervention | CAP1 Mét + CAP1 Peint | - | Q1 | - | Zabe
         </form>`;
     };
   }
-  function eventForm(id) {
+  function eventForm(id, pre) {
     return () => {
       const ev = id ? S.events.find(x => x.id === id) : null;
-      const v = ev || { type: 'pfmp', label: '', start: today(), end: today(), classIds: [], noClass: true };
-      return `<h2>${ev ? 'Modifier' : 'Ajouter'} une période</h2>
+      const v = ev || { type: 'pfmp', label: '', start: today(), end: today(), classIds: [], noClass: true, ...(pre || {}) };
+      return `<h2>${ev ? 'Modifier une période' : pre && pre.type === 'sanscours' ? 'Jours sans cours' : 'Ajouter une période'}</h2>
+        ${pre && pre.type === 'sanscours' ? '<p class="small muted">Choisissez le premier et le dernier jour sans cours. Aucune classe cochée = toutes les classes.</p>' : ''}
         <form class="form" data-form="event" data-id="${id || ''}">
           <label>Type <select name="type">${Object.entries(EVENT_TYPES).map(([k, l]) => `<option value="${k}" ${v.type === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
           <label>Libellé <input name="label" value="${esc(v.label)}" placeholder="PFMP 1, Bac blanc…"></label>
@@ -2034,6 +2051,7 @@ Mardi | 8h00-9h50 | Co-intervention | CAP1 Mét + CAP1 Peint | - | Q1 | - | Zabe
     extraForm: () => openModal(slotForm(null, true)),
     delSlot: t => { if (!confirm('Supprimer ce créneau ?')) return; S.slots = S.slots.filter(s => s.id !== t.dataset.id); save(); },
     eventForm: t => openModal(eventForm(t.dataset.id)),
+    dayOffForm: t => openModal(eventForm(null, { type: 'sanscours', label: 'Pas de cours', start: t.dataset.d, end: t.dataset.d, classIds: [], noClass: true })),
     delEvent: t => { if (!confirm('Supprimer cette période ?')) return; S.events = S.events.filter(x => x.id !== t.dataset.id); save(); },
     reloadHolidays: () => ensureHolidays(true),
     markDone: () => {

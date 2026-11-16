@@ -419,4 +419,111 @@ window.PATCHES = [{
     }
     return true;
   },
+}, {
+  id: '2026-11-16-k',
+  label: 'Fin de période au 15 déc., CAP1 Mét le 30 nov., géométrie (1) des CAP, co-interventions',
+  apply(S, h) {
+    const { E, uid, norm, bump } = h;
+    const byOrder = (a, b) => a.order - b.order;
+    const caps = ['ccap1p', 'ccap1m'];
+    const geoSeq = cid => S.sequences.filter(q => q.classId === cid).sort(byOrder).find(q => norm(q.title).startsWith('geometrie1'));
+    if (!caps.every(geoSeq)) return false;
+    const dateOf = hid => hid.split('@')[1].split('#')[0];
+    const slotOf = hid => S.slots.find(s => s.id === hid.split('@')[0]);
+
+    // 1. AP de CAP transformées en maths par l'import (vendredi 4 juin, mardi 29 juin…) : redeviennent des AP
+    for (const [k, r] of Object.entries(S.occ)) {
+      const sl = slotOf(k);
+      if (r.imp && r.counts && sl && sl.type === 'ap' && sl.classIds.some(c => caps.includes(c)) && dateOf(k) >= '2026-11-16') {
+        delete r.counts; delete r.imp; if (!Object.keys(r).length) delete S.occ[k];
+      }
+    }
+
+    // 2. Dernier jour de cours avant Noël : mardi 15 déc.
+    S.events.push({ id: uid(), type: 'sanscours', label: 'Fin de période (dernier jour : mardi 15 déc.)', start: '2026-12-16', end: '2026-12-18', classIds: [], noClass: true });
+    // Les 2 h de CAP1 Mét du vendredi 18 déc. après-midi passent au lundi 30 nov.
+    S.extras.push(
+      { id: uid(), date: '2026-11-30', start: '15:30', end: '16:30', type: 'ap', classIds: ['ccap1m'], classLabel: '', group: '', colleague: '', label: '', semester: '', weeks: '12' },
+      { id: uid(), date: '2026-11-30', start: '16:30', end: '17:30', type: 'cours', classIds: ['ccap1m'], classLabel: '', group: '', colleague: '', label: '', semester: '', weeks: '12' });
+
+    // 3. Mardi 17 nov. : pas de co-intervention non plus (formation)
+    const f17 = S.events.find(ev => ev.type === 'formation' && ev.start === '2026-11-17');
+    if (f17) f17.keepCoint = false;
+
+    // 4. Géométrie (1), mêmes séances pour les deux CAP
+    const titles = [['Figures planes et propriétés', 'cours'], ['Angles (sans rapporteur), somme des angles = 180°', 'cours'], ['Périmètres', 'cours'], ['Aires', 'cours'],
+      ['Conversions de longueurs et d’aires', 'cours'], ['Révision de géométrie', 'revision'], ['Évaluation de géométrie', 'evaluation']];
+    for (const cid of caps) {
+      const q = geoSeq(cid);
+      S.seances = S.seances.filter(s => s.sequenceId !== q.id);
+      titles.forEach(([t, kind], j) => S.seances.push({ id: uid(), sequenceId: q.id, title: t, kind, prepared: j === 0, order: j }));
+    }
+    // Mardi 10 nov., co-intervention : l'interro (1re heure), puis G1 et le début de G2 (2e heure), pour les deux classes
+    const ci1 = S.slots.find(s => s.type === 'coint' && s.day === 2 && s.weeks === '1' && s.classIds.includes('ccap1m'));
+    const ci2 = S.slots.find(s => s.type === 'coint' && s.day === 2 && s.weeks === '2' && s.classIds.includes('ccap1m'));
+    if (ci1) {
+      for (const i of [0, 1]) { const k = `${ci1.id}@2026-11-10#${i}`; S.occ[k] = { ...(S.occ[k] || {}), counts: true, status: 'realisee' }; }
+      // Contenus des co-interventions (hors progression)
+      S.notes[`${ci1.id}@2026-11-24`] = 'Entraînement 1 – figures et angles, avec le rapporteur';
+      S.notes[`${ci1.id}@2026-12-08`] = 'Entraînement 2 – exercices 6 à 12 (cercle, disque, triangle, parallélogramme, problèmes)';
+    }
+    if (ci2) {
+      S.notes[`${ci2.id}@2026-12-01`] = 'Entraînement 2 – exercices 1 à 5 (conversions, rectangle, carré)';
+      S.notes[`${ci2.id}@2026-12-15`] = 'Possible évaluation';
+      delete S.notes[`${ci2.id}@2026-11-17`];
+    }
+
+    // 5. Progression initiale figée des CAP : géométrie (1) aux nouvelles dates
+    bump();
+    const p = E.plan();
+    for (const cid of caps) {
+      const ini = S.initial[cid], q = geoSeq(cid);
+      if (!ini) continue;
+      const i = ini.sequences.findIndex(x => norm(x.title) === norm(q.title));
+      const se = S.seances.filter(s => s.sequenceId === q.id).sort(byOrder).map(s => ({ title: s.title, date: (p.seance[s.id] || {}).firstDate || null }));
+      const nq = { title: q.title, hours: se.length, start: se[0] && se[0].date, end: se.length ? se[se.length - 1].date : null, seances: se };
+      if (i >= 0) ini.sequences[i] = nq;
+      ini.text = h.iniText(ini);
+    }
+    return true;
+  },
+}, {
+  id: '2026-11-16-l',
+  label: 'Évaluation de géométrie commune aux deux CAP, mardi 15 déc. en co-intervention',
+  apply(S, h) {
+    const { E, uid, norm, bump } = h;
+    const byOrder = (a, b) => a.order - b.order;
+    const caps = ['ccap1p', 'ccap1m'];
+    const geoSeq = cid => S.sequences.filter(q => q.classId === cid).sort(byOrder).find(q => norm(q.title).startsWith('geometrie1'));
+    const ci2 = S.slots.find(s => s.type === 'coint' && s.day === 2 && s.weeks === '2' && s.classIds.includes('ccap1m'));
+    if (!ci2 || !caps.every(geoSeq)) return false;
+    // L'heure de co-intervention du 15 déc. porte l'évaluation des deux classes
+    const k = `${ci2.id}@2026-12-15#0`;
+    S.occ[k] = { ...(S.occ[k] || {}), counts: true };
+    S.notes[`${ci2.id}@2026-12-15`] = 'Évaluation de géométrie (CAP1 Peint et CAP1 Mét ensemble)';
+    // Les heures entre la dernière notion et l'évaluation : interros intermédiaires de 30 min et exercices
+    const interro = n => `Interro intermédiaire ${n} (30 min) et exercices`;
+    const extra = { ccap1p: 1, ccap1m: 2 };
+    for (const cid of caps) {
+      const q = geoSeq(cid);
+      const ss = S.seances.filter(s => s.sequenceId === q.id).sort(byOrder);
+      const rev = ss.findIndex(s => s.kind === 'revision');
+      if (rev < 0 || ss.some(s => /^interro interm/i.test(s.title))) continue;
+      const added = Array.from({ length: extra[cid] }, (_, j) => ({ id: uid(), sequenceId: q.id, title: interro(j + 1), kind: 'revision', prepared: false, order: 0 }));
+      [...ss.slice(0, rev), ...added, ...ss.slice(rev)].forEach((s, j) => { s.order = j; });
+      S.seances.push(...added);
+    }
+    // Progressions initiales figées : géométrie (1) aux nouvelles dates
+    bump();
+    const p = E.plan();
+    for (const cid of caps) {
+      const ini = S.initial[cid], q = geoSeq(cid);
+      if (!ini) continue;
+      const i = ini.sequences.findIndex(x => norm(x.title) === norm(q.title));
+      const se = S.seances.filter(s => s.sequenceId === q.id).sort(byOrder).map(s => ({ title: s.title, date: (p.seance[s.id] || {}).firstDate || null }));
+      if (i >= 0) ini.sequences[i] = { title: q.title, hours: se.length, start: se[0] && se[0].date, end: se.length ? se[se.length - 1].date : null, seances: se };
+      ini.text = h.iniText(ini);
+    }
+    return true;
+  },
 }];
